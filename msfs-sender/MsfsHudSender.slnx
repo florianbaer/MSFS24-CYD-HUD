@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MsfsHudSender.Tests/MsfsHudSender.Tests.csproj" />
+  <Project Path="MsfsHudSender/MsfsHudSender.csproj" />
+</Solution>

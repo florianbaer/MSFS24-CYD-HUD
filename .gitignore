@@ -1,0 +1,31 @@
+# Arduino IDE
+*.elf
+*.bin
+*.hex
+*.map
+build/
+.build/
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# .NET / C#
+msfs-sender/**/bin/
+msfs-sender/**/obj/
+msfs-sender/publish/
+
+# WiFi credentials (never commit)
+ship_hud/wifi_config.h
+
+# IDE / editor
+.vscode/
+*.swp
+*.swo
+*~
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
