@@ -26,6 +26,13 @@
 // while the other is still streaming to the panel, so drawing and the SPI
 // transfer overlap instead of taking turns: smoother motion, no tearing bands.
 #define DRAW_BUF_LINES 30
+
+// Set to 0 (e.g. -DHUD_USE_DMA=0) to push pixels with the CPU only: for a board
+// whose display misbehaves with DMA, and for the ESP32 emulator, which does not
+// emulate the display's SPI bus (see tools/qemu_smoke.py).
+#ifndef HUD_USE_DMA
+#define HUD_USE_DMA 1
+#endif
 #define DRAW_BUF_SIZE  (TFT_HOR_RES * DRAW_BUF_LINES * (LV_COLOR_DEPTH / 8))
 
 #define BACKLIGHT_PIN 27
@@ -35,13 +42,32 @@
 TFT_eSPI tft = TFT_eSPI();
 bool useDma = false;
 
+// A 30-line DMA transfer takes ~3 ms at 55 MHz. One that is still running after
+// this long never will (seen in the ESP32 emulator); TFT_eSPI's dmaWait() would
+// then block forever, so wait with a limit and fall back to CPU pushes instead.
+static const uint32_t DMA_TIMEOUT_MS = 100;
+
+static bool waitForDma() {
+  uint32_t start = millis();
+  while (tft.dmaBusy()) {
+    if (millis() - start > DMA_TIMEOUT_MS) return false;
+  }
+  return true;
+}
+
+static void disableDma(const char* why) {
+  useDma = false;
+  tft.endWrite();  // release the bus kept claimed for DMA
+  Serial.printf("Display: DMA %s, switching to CPU transfers\n", why);
+}
+
 void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   uint32_t w = (area->x2 - area->x1 + 1);
   uint32_t h = (area->y2 - area->y1 + 1);
+  if (useDma && !waitForDma()) disableDma("stalled");
   if (useDma) {
-    // The bus stays claimed (startWrite in setup); wait for the previous
-    // buffer, then hand this one to DMA and let LVGL carry on with the other.
-    tft.dmaWait();
+    // The bus stays claimed (startWrite in setup); the previous buffer is done,
+    // hand this one to DMA and let LVGL carry on with the other.
     tft.setAddrWindow(area->x1, area->y1, w, h);
     tft.pushPixelsDMA((uint16_t *)px_map, w * h);
   } else {
@@ -51,6 +77,15 @@ void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
     tft.endWrite();
   }
   lv_display_flush_ready(disp);
+}
+
+/// Push one black line by DMA and check it completes: some setups never finish
+/// a DMA transfer, and finding out here keeps the first frame from hanging.
+static bool dmaSelfTest(uint8_t* buf) {
+  memset(buf, 0, TFT_HOR_RES * 2);
+  tft.setAddrWindow(0, 0, TFT_HOR_RES, 1);
+  tft.pushPixelsDMA((uint16_t *)buf, TFT_HOR_RES);
+  return waitForDma();
 }
 
 static uint8_t* allocDrawBuf(bool dma) {
@@ -146,6 +181,10 @@ FrameDecoder decoder;
 
 // ---- "NO DATA" timeout ----
 uint32_t lastDataMs = 0;
+// Frames decoded since the last status line (printed every 10 s while data flows)
+uint32_t framesSinceReport = 0;
+uint32_t lastReportMs = 0;
+static const uint32_t REPORT_MS = 10000;
 static const uint32_t NO_DATA_TIMEOUT_MS = 2000;
 lv_obj_t* lblNoData = nullptr;
 
@@ -218,6 +257,7 @@ void processFrame() {
   uint8_t payload[64];
   int len = decoder.payload(payload, sizeof(payload));
   lastDataMs = millis();
+  framesSinceReport++;
 
   switch (decoder.msgType()) {
     case MSG_ATTITUDE:    handleAttitude(payload, len); break;
@@ -265,13 +305,15 @@ void setup() {
 
   // Prefer two DMA buffers; fall back to a single CPU-pushed buffer if the
   // DMA-capable heap is short (e.g. with WiFi and a large canvas).
-  uint8_t* buf1 = allocDrawBuf(true);
+  uint8_t* buf1 = HUD_USE_DMA ? allocDrawBuf(true) : nullptr;
   uint8_t* buf2 = buf1 ? allocDrawBuf(true) : nullptr;
   if (buf1 && buf2 && tft.initDMA()) {
     useDma = true;
     tft.setSwapBytes(true);  // pushPixelsDMA swaps RGB565 to panel byte order
     tft.startWrite();        // the display owns this SPI bus: keep it claimed
-  } else {
+    if (!dmaSelfTest(buf1)) disableDma("self-test failed");
+  }
+  if (!useDma) {
     if (buf2) { heap_caps_free(buf2); buf2 = nullptr; }
     if (!buf1) buf1 = allocDrawBuf(false);
   }
@@ -381,6 +423,16 @@ void loop() {
   gyro.tick(millis());
   nav.tick(millis());
   alert.tick(millis());
+
+  // Telemetry status on the serial log, for diagnosing a silent display
+  if (millis() - lastReportMs >= REPORT_MS) {
+    if (framesSinceReport) {
+      Serial.printf("Telemetry: %u frames in %u s\n", (unsigned)framesSinceReport,
+                    (unsigned)((millis() - lastReportMs) / 1000));
+    }
+    framesSinceReport = 0;
+    lastReportMs = millis();
+  }
 
   // "NO DATA" indicator
   if (millis() - lastDataMs > NO_DATA_TIMEOUT_MS) {

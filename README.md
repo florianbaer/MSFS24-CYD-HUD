@@ -93,7 +93,7 @@ The ESP32 drives a 16-bit (RGB565) SPI panel, so the firmware works to make ever
 - **Smooth motion.** Telemetry arrives at 20–30 Hz; the gyro eases toward each new sample ([`Smoothing.h`](lib/hud_widgets/Smoothing.h)) and redraws at up to ~40 fps, so the horizon glides instead of stepping. Heading takes the short way round through north.
 - **Gliding gauges on every screen.** Arcs and bars ease to each new value ([`Anim.h`](lib/hud_widgets/Anim.h)) instead of jumping, and the nav compass card turns smoothly with the aircraft heading.
 - **More instrument, less text.** The engine RPM arc carries caution and limit bands, the vertical-speed bar has a scale and a zero mark, and the nav screen has a compass card with the heading bug and a bearing pointer to the next waypoint.
-- **DMA double buffering.** LVGL renders into one buffer while the other streams to the panel over DMA, so drawing and the SPI transfer overlap (falls back to a single buffer if DMA memory is short). The serial log prints which mode is active.
+- **DMA double buffering.** LVGL renders into one buffer while the other streams to the panel over DMA, so drawing and the SPI transfer overlap. A self-test at boot and a bounded wait fall back to CPU transfers if DMA misbehaves or its memory is short; `-DHUD_USE_DMA=0` turns it off entirely. The serial log prints which mode is active.
 - **Only what changed.** LVGL redraws dirty areas at up to 60 Hz; static screens cost nothing, and the gyro is not redrawn while another screen is shown.
 
 The backlight is PWM-driven; lower `BACKLIGHT_BRIGHTNESS` in `ship_hud.ino` for night flying.
@@ -148,6 +148,7 @@ The protocol is implemented twice and pinned by tests on both sides using the sa
 │   └── installer/              # Tests for the installer logic (PowerShell)
 ├── tools/
 │   ├── screenshots/            # Renders the screens to docs/images/*.png
+│   ├── qemu_smoke.py           # Boots the firmware in the ESP32 emulator with telemetry
 │   └── sync_headers.sh         # Copies lib/ into ship_hud/
 └── platformio.ini
 ```
@@ -166,6 +167,12 @@ c++ -std=c++17 -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_t
 
 # Installer logic (settings, display detection, exe.xml) without hardware
 pwsh -NoProfile -File tests/installer/installer_test.ps1
+
+# Boot the real firmware in Espressif's ESP32 emulator and stream a demo flight
+# into it (needs qemu-system-xtensa from github.com/espressif/qemu; CI does this)
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs,FlashMode=dio \
+  --build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0" --build-path build ship_hud
+tools/qemu_smoke.py build/ship_hud.ino.merged.bin
 
 # After editing anything in lib/, refresh the copies in the sketch folder
 tools/sync_headers.sh

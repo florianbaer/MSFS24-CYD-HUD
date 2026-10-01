@@ -149,7 +149,10 @@ All multi-byte fields are little-endian.
 -> The sender lists the ports it can see. Check the port name in Device Manager and close anything else that has the port open (Arduino serial monitor, `pio device monitor`).
 
 **No data on display**
--> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Tap to cycle through all 7 screens.
+-> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Tap to cycle through all 7 screens. While telemetry arrives, the display's serial log prints `Telemetry: N frames in 10 s` (about 1600 at 20 Hz); if that line is missing, nothing valid is reaching it.
+
+**Display stays black, freezes, or shows garbage**
+-> Check the serial log at boot: `Display: DMA double-buffered` or `single buffer`, and the free heap. If DMA is the problem on your board, build with `-DHUD_USE_DMA=0` (PlatformIO: add it to `build_flags`; arduino-cli: `--build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0"`).
 
 **WiFi not connecting**
 -> Copy `wifi_config.h.example` to `wifi_config.h`, fill in your credentials, and reflash the ESP32 firmware. See [SETUP.md](SETUP.md#wifi-optional).
