@@ -15,7 +15,9 @@
 /* LVGL's own heap: all widgets of all 7 screens live in here. */
 #define LV_MEM_SIZE (64U * 1024U)
 
-#define LV_DEF_REFR_PERIOD 33
+/* Render dirty areas up to ~60 times a second. Only changed regions are
+ * redrawn, so static screens cost nothing; the gyro paces itself (~40 fps). */
+#define LV_DEF_REFR_PERIOD 16
 #define LV_USE_LOG 0
 
 /* Every font size the widgets reference must be enabled. */

@@ -37,7 +37,30 @@ Alerts (engine fire, stall, overspeed, gear unsafe) are shown by priority. The d
 
 ## Quick Start
 
-### 1. Flash the display
+### Windows installer (recommended)
+
+Plug the display into the PC that runs MSFS 2024, then either double-click **`Install.cmd`** in a downloaded copy of this repository, or paste this into PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/florianbaer/msfs24-cyd-hud/main/installer/bootstrap.ps1 | iex
+```
+
+The installer takes care of everything, without admin rights:
+
+1. **Finds the display** on USB by its USB chip (CH340 / CH9102 / CP210x) and points you to the driver if Windows has none.
+2. **USB or WiFi**: for WiFi it asks for the network and password; the password only ends up in the firmware, never in the repository folder.
+3. **Builds and flashes the firmware** with a private Arduino toolchain under `%LOCALAPPDATA%\MsfsCydHud` — your own Arduino IDE setup and libraries are left alone. For WiFi it reads the display's IP address from its boot log.
+4. **Builds the sender**: installs the .NET 10 SDK for your user if it is missing and finds the MSFS 2024 SDK (or explains how to install it from the simulator's developer menu).
+5. **Tests the display** with a 15-second synthetic flight.
+6. **Starts the HUD with MSFS** via `exe.xml` (Steam and Microsoft Store, with a backup of the file), and adds Start-menu shortcuts and an *Apps & features* entry for uninstalling.
+
+Re-run it any time to re-flash, switch between USB and WiFi or update the sender — your previous answers are the defaults. `Install.cmd -Yes` accepts all defaults, `Install.cmd -Uninstall` removes everything again. A full log is written to `%LOCALAPPDATA%\MsfsCydHud\install.log`.
+
+For USB the sender is registered with the target `auto`: it finds the display by its USB chip, so a different COM number after re-plugging does not break anything.
+
+### Manual setup
+
+#### 1. Flash the display
 
 See [docs/SETUP.md](docs/SETUP.md) for Arduino IDE and PlatformIO instructions. With PlatformIO it is:
 
@@ -45,19 +68,33 @@ See [docs/SETUP.md](docs/SETUP.md) for Arduino IDE and PlatformIO instructions. 
 pio run -t upload
 ```
 
-### 2. Run the sender (Windows, next to MSFS 2024)
+#### 2. Run the sender (Windows, next to MSFS 2024)
 
 The sender needs the SimConnect libraries from the MSFS 2024 SDK, so it is built from source on a machine that has the SDK installed. See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for details.
 
 ```sh
 set MSFS_SDK=C:\MSFS 2024 SDK
 cd msfs-sender
-dotnet run --project MsfsHudSender -- COM6               # USB serial, 20 Hz
+dotnet run --project MsfsHudSender                      # USB, finds the display by itself
+dotnet run --project MsfsHudSender -- COM6               # USB serial on a fixed port, 20 Hz
 dotnet run --project MsfsHudSender -- COM6 --hz 30       # faster updates
 dotnet run --project MsfsHudSender -- 192.168.1.50 --udp # WiFi
+dotnet run --project MsfsHudSender -- --demo             # display test without MSFS
 ```
 
 The sender waits until MSFS is running and exits when the simulator quits.
+
+## Display quality
+
+The ESP32 drives a 16-bit (RGB565) SPI panel, so the firmware works to make every frame count:
+
+- **Anti-aliased attitude indicator.** The horizon ball is rasterised per pixel with sub-pixel coverage on the horizon, the pitch ladder and the bezel — no stair-stepping when the aircraft banks. Bank scale, roll pointer, pitch numbers and the aircraft symbol are drawn with LVGL's anti-aliased primitives on top.
+- **Dithered gradients.** Sky and ground are lit gradients; a 4×4 ordered (Bayer) dither restores the in-between shades RGB565 cannot store, so there is no colour banding.
+- **Smooth motion.** Telemetry arrives at 20–30 Hz; the gyro eases toward each new sample ([`Smoothing.h`](lib/hud_widgets/Smoothing.h)) and redraws at up to ~40 fps, so the horizon glides instead of stepping. Heading takes the short way round through north.
+- **DMA double buffering.** LVGL renders into one buffer while the other streams to the panel over DMA, so drawing and the SPI transfer overlap (falls back to a single buffer if DMA memory is short). The serial log prints which mode is active.
+- **Only what changed.** LVGL redraws dirty areas at up to 60 Hz; static screens cost nothing, and the gyro is not redrawn while another screen is shown.
+
+The backlight is PWM-driven; lower `BACKLIGHT_BRIGHTNESS` in `ship_hud.ino` for night flying.
 
 ## Protocol
 
@@ -101,7 +138,11 @@ The protocol is implemented twice and pinned by tests on both sides using the sa
 ├── msfs-sender/                # C# / .NET 10 sender
 │   ├── MsfsHudSender/          # SimConnect source, conversions, protocol, transports
 │   └── MsfsHudSender.Tests/    # xUnit tests
-├── tests/proto/                # Host-side tests for the C++ decoder
+├── installer/                  # Windows installer (install.ps1) and web bootstrap
+├── Install.cmd                 # Double-click entry point for the installer
+├── tests/
+│   ├── proto/                  # Host-side tests for the C++ decoder
+│   └── widgets/                # Host-side tests for widget helpers (smoothing)
 ├── tools/
 │   ├── screenshots/            # Renders the screens to docs/images/*.png
 │   └── sync_headers.sh         # Copies lib/ into ship_hud/
@@ -116,6 +157,9 @@ dotnet test msfs-sender/
 
 # Firmware side of the protocol (any OS)
 c++ -std=c++17 -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test && ./decoder_test
+
+# Display-side easing
+c++ -std=c++17 -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_test && ./smoothing_test
 
 # After editing anything in lib/, refresh the copies in the sketch folder
 tools/sync_headers.sh

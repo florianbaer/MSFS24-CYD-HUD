@@ -9,6 +9,7 @@
 #include <TFT_eSPI.h>
 #include <Wire.h>
 #include <esp_task_wdt.h>
+#include <esp_heap_caps.h>
 #include "hud_widgets.h"
 #include "hud_proto.h"
 
@@ -21,20 +22,51 @@
 
 #define TFT_HOR_RES   320
 #define TFT_VER_RES   240
-#define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES / 10 * (LV_COLOR_DEPTH / 8))
+// Two draw buffers of 30 lines each. With DMA, LVGL renders into one buffer
+// while the other is still streaming to the panel, so drawing and the SPI
+// transfer overlap instead of taking turns: smoother motion, no tearing bands.
+#define DRAW_BUF_LINES 30
+#define DRAW_BUF_SIZE  (TFT_HOR_RES * DRAW_BUF_LINES * (LV_COLOR_DEPTH / 8))
 
 #define BACKLIGHT_PIN 27
+#define BACKLIGHT_PWM_HZ   5000
+#define BACKLIGHT_BRIGHTNESS 255  // 0..255; lower it for night flying
 
 TFT_eSPI tft = TFT_eSPI();
+bool useDma = false;
 
 void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   uint32_t w = (area->x2 - area->x1 + 1);
   uint32_t h = (area->y2 - area->y1 + 1);
-  tft.startWrite();
-  tft.setAddrWindow(area->x1, area->y1, w, h);
-  tft.pushColors((uint16_t *)px_map, w * h, true);
-  tft.endWrite();
+  if (useDma) {
+    // The bus stays claimed (startWrite in setup); wait for the previous
+    // buffer, then hand this one to DMA and let LVGL carry on with the other.
+    tft.dmaWait();
+    tft.setAddrWindow(area->x1, area->y1, w, h);
+    tft.pushPixelsDMA((uint16_t *)px_map, w * h);
+  } else {
+    tft.startWrite();
+    tft.setAddrWindow(area->x1, area->y1, w, h);
+    tft.pushColors((uint16_t *)px_map, w * h, true);
+    tft.endWrite();
+  }
   lv_display_flush_ready(disp);
+}
+
+static uint8_t* allocDrawBuf(bool dma) {
+  uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | (dma ? MALLOC_CAP_DMA : 0);
+  return (uint8_t*)heap_caps_aligned_alloc(4, DRAW_BUF_SIZE, caps);
+}
+
+static void backlightInit() {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttach(BACKLIGHT_PIN, BACKLIGHT_PWM_HZ, 8);
+  ledcWrite(BACKLIGHT_PIN, BACKLIGHT_BRIGHTNESS);
+#else
+  ledcSetup(0, BACKLIGHT_PWM_HZ, 8);
+  ledcAttachPin(BACKLIGHT_PIN, 0);
+  ledcWrite(0, BACKLIGHT_BRIGHTNESS);
+#endif
 }
 
 // LVGL time base
@@ -220,21 +252,33 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Starting HUD...");
 
-  pinMode(BACKLIGHT_PIN, OUTPUT);
-  digitalWrite(BACKLIGHT_PIN, HIGH);
   touchInit();
 
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
+  backlightInit();  // after the clear, so the panel never flashes garbage
 
   lv_init();
   lv_tick_set_cb(lvgl_tick_cb);
 
-  uint8_t* draw_buf = new uint8_t[DRAW_BUF_SIZE];
+  // Prefer two DMA buffers; fall back to a single CPU-pushed buffer if the
+  // DMA-capable heap is short (e.g. with WiFi and a large canvas).
+  uint8_t* buf1 = allocDrawBuf(true);
+  uint8_t* buf2 = buf1 ? allocDrawBuf(true) : nullptr;
+  if (buf1 && buf2 && tft.initDMA()) {
+    useDma = true;
+    tft.setSwapBytes(true);  // pushPixelsDMA swaps RGB565 to panel byte order
+    tft.startWrite();        // the display owns this SPI bus: keep it claimed
+  } else {
+    if (buf2) { heap_caps_free(buf2); buf2 = nullptr; }
+    if (!buf1) buf1 = allocDrawBuf(false);
+  }
+  Serial.printf("Display: %s, %d-line buffers\n", useDma ? "DMA double-buffered" : "single buffer", DRAW_BUF_LINES);
+
   lv_display_t * disp = lv_display_create(TFT_HOR_RES, TFT_VER_RES);
   lv_display_set_flush_cb(disp, my_disp_flush);
-  lv_display_set_buffers(disp, draw_buf, NULL, DRAW_BUF_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_buffers(disp, buf1, buf2, DRAW_BUF_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   lv_indev_t * indev = lv_indev_create();
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
@@ -248,6 +292,7 @@ void setup() {
   gyroCfg.cx = 160;
   gyroCfg.cy = 105;
   gyroCfg.radius = 90;
+  gyroCfg.smooth = true;  // ease between telemetry samples (see Smoothing.h)
   gyro.create(screens[0], gyroCfg);
 
   engine.create(screens[1]);      // Screen 1: MSFS Engine Gauges
@@ -326,7 +371,8 @@ void loop() {
   }
 #endif
 
-  // Alert heartbeat tick
+  // Animations: horizon easing and alert heartbeat
+  gyro.tick(millis());
   alert.tick(millis());
 
   // "NO DATA" indicator

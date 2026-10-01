@@ -2,6 +2,8 @@
 
 A companion app that reads flight data from Microsoft Flight Simulator 2024 via the native SimConnect C# API and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 7 HUD screens.
 
+> **Using the Windows installer?** `Install.cmd` in the repository root builds the sender, installs it to `%LOCALAPPDATA%\MsfsCydHud\app`, registers it in `exe.xml` and adds Start-menu shortcuts. This page covers doing it by hand.
+
 ## Requirements
 
 - **Windows 10/11** with MSFS 2024
@@ -28,7 +30,16 @@ For development, `dotnet run --project MsfsHudSender -- COM6` works as well.
 2. Run:
 
 ```
-msfs-hud-sender.exe COM6
+msfs-hud-sender.exe            :: same as "auto": finds the display by its USB chip
+msfs-hud-sender.exe COM6       :: or a fixed port
+```
+
+`auto` (the default) looks for the USB-serial chips used on these boards (CH340, CH9102, CP210x) and waits until one is plugged in, so the COM number may change between USB sockets without breaking auto-start.
+
+To check the display without the simulator, send a synthetic flight:
+
+```
+msfs-hud-sender.exe --demo
 ```
 
 The sender can be started before or after MSFS: it waits until the simulator answers, starts streaming, and exits when MSFS quits. Data only becomes meaningful once you are in a flight.
@@ -45,6 +56,7 @@ msfs-hud-sender.exe 192.168.1.50 --udp --port 4242
 | `--baud` | 115200 | Serial baud rate |
 | `--hz` | 20 | Send rate in Hz (1-60) |
 | `--udp` | — | Use UDP transport instead of serial; the target is the display's IP address or host name |
+| `--demo` | — | Send a synthetic flight instead of MSFS data (does not need MSFS or the SDK) |
 | `--port` | 4242 | UDP port (with --udp) |
 
 ## Auto-start with MSFS
@@ -53,7 +65,7 @@ MSFS can automatically launch companion apps on startup via an `exe.xml` file.
 
 **File location:**
 - **Steam**: `%APPDATA%\Microsoft Flight Simulator 2024\exe.xml`
-- **MS Store**: `%LOCALAPPDATA%\Packages\Microsoft.FlightSimulator_8wekyb3d8bbwe\LocalCache\exe.xml`
+- **MS Store**: `%LOCALAPPDATA%\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalCache\exe.xml`
 
 If the file doesn't exist, create it. If it already exists, just add the `<Launch.Addon>` block inside the existing `<SimBase.Document>`.
 
@@ -69,12 +81,12 @@ If the file doesn't exist, create it. If it already exists, just add the `<Launc
     <Disabled>False</Disabled>
     <ManualLoad>False</ManualLoad>
     <Path>C:\Your\Path\msfs-hud-sender.exe</Path>
-    <CommandLine>COM6</CommandLine>
+    <CommandLine>auto</CommandLine>
   </Launch.Addon>
 </SimBase.Document>
 ```
 
-Replace `C:\Your\Path\` with the actual folder where you saved the exe, and `COM6` with your ESP32 serial port.
+Replace `C:\Your\Path\` with the actual folder where you saved the exe. `auto` finds the display on USB; use `COM6` for a fixed port or `192.168.1.50 --udp` for WiFi.
 
 ## Display Screens
 
@@ -129,6 +141,9 @@ All multi-byte fields are little-endian.
 
 **"Unable to load DLL 'SimConnect.dll'"**
 -> `SimConnect.dll` must be in the same folder as `msfs-hud-sender.exe`.
+
+**"Waiting for the display to be plugged in"** (with `auto`)
+-> No CH340/CH9102/CP210x device is connected, or its driver is missing (Device Manager shows it with a warning sign). Pass the port name explicitly if your board uses a different USB chip.
 
 **"Could not open serial port"**
 -> The sender lists the ports it can see. Check the port name in Device Manager and close anything else that has the port open (Arduino serial monitor, `pio device monitor`).

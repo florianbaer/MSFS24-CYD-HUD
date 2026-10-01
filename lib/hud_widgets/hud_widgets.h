@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ColorScale.h"
+#include "Smoothing.h"
 #include "GyroHorizon.h"
 #include "EngineGauges.h"
 #include "FlightData.h"

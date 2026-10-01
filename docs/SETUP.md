@@ -1,5 +1,7 @@
 # Setup Guide
 
+> **On Windows, the installer does all of this for you:** double-click `Install.cmd` in the repository root (see the [README](../README.md#windows-installer-recommended)). The steps below are for PlatformIO, the Arduino IDE, other operating systems, or if you want to know what the installer does.
+
 The display and LVGL settings live in [`config/`](../config) and are shared by both build systems:
 
 | File | Purpose |
@@ -34,7 +36,7 @@ Then go to **Tools > Board > Boards Manager**, search for **esp32** by Espressif
 
 - **Tools > Board**: `ESP32 Dev Module`
 - **Tools > Flash Size**: `4MB`
-- **Tools > Partition Scheme**: `Default 4MB with spiffs` (see the WiFi note below)
+- **Tools > Partition Scheme**: `Minimal SPIFFS (1.9MB APP with OTA)` (the default 1.3 MB app partition is ~99% full with WiFi enabled)
 - **Tools > Upload Speed**: `921600`
 - **Tools > Port**: Select the COM port for your board
 
@@ -75,8 +77,9 @@ LIBS="$(arduino-cli config get directories.user)/libraries"
 cp config/lv_conf.h "$LIBS/lv_conf.h"
 cp config/User_Setup.h "$LIBS/TFT_eSPI/User_Setup.h"
 
-arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
-arduino-cli upload  --fqbn esp32:esp32:esp32 -p <PORT> ship_hud
+FQBN=esp32:esp32:esp32:PartitionScheme=min_spiffs
+arduino-cli compile --fqbn $FQBN ship_hud
+arduino-cli upload  --fqbn $FQBN -p <PORT> ship_hud
 ```
 
 ## WiFi (optional)
@@ -89,4 +92,4 @@ USB serial works out of the box. To also receive telemetry over WiFi:
 
 The display keeps listening on USB serial as well, and reconnects by itself if the network drops.
 
-> **Flash size:** with WiFi enabled the firmware fills about 97% of the default 1.3 MB app partition on core 3.x. If you add features, pick a partition scheme with a larger app area, e.g. **Minimal SPIFFS (1.9MB APP with OTA)**.
+> **Flash size:** with WiFi enabled the firmware fills about 99% of the default 1.3 MB app partition on core 3.x, which is why every build here (PlatformIO, CI, the installer) uses **Minimal SPIFFS (1.9MB APP with OTA)**.

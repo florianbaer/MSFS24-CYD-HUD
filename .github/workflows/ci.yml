@@ -28,12 +28,13 @@ jobs:
           LIBS="$(arduino-cli config get directories.user)/libraries"
           cp config/lv_conf.h "$LIBS/lv_conf.h"
           cp config/User_Setup.h "$LIBS/TFT_eSPI/User_Setup.h"
+      # Same board and partition scheme the installer flashes (installer/install.ps1)
       - name: Compile (USB serial only)
-        run: arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs ship_hud
       - name: Compile (with WiFi)
         run: |
           cp ship_hud/wifi_config.h.example ship_hud/wifi_config.h
-          arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs ship_hud
 
   host-tests:
     name: Protocol decoder & widget rendering (host)
@@ -44,6 +45,10 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test
           ./decoder_test
+      - name: Widget smoothing tests
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_test
+          ./smoothing_test
       - name: Render all screens
         run: make -C tools/screenshots -j4 OUT="$RUNNER_TEMP/screens"
 
@@ -70,6 +75,14 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+      - name: Installer scripts parse
+        shell: powershell
+        run: |
+          foreach ($f in 'installer/install.ps1', 'installer/bootstrap.ps1') {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }
+          }
       - name: Publish single-file exe
         run: >
           dotnet publish msfs-sender/MsfsHudSender/MsfsHudSender.csproj
