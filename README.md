@@ -18,7 +18,7 @@ Tap the touchscreen to cycle through the 7 screens.
     <td align="center"><img src="docs/images/config.png" width="270" alt="Aircraft configuration screen"><br><b>Config</b><br>Flaps, gear, elevator and rudder trim</td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Master, mode annunciators, targets</td>
+    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Lit mode annunciators, target altitude and heading</td>
     <td align="center"><img src="docs/images/alert.png" width="270" alt="Stall alert overlay"><br><b>Alerts</b><br>Blinking overlay on every screen, plus the red LED</td>
     <td></td>
   </tr>

@@ -100,7 +100,8 @@ public:
   /// Aircraft heading in tenths of a degree (from the attitude message).
   void setHeading(int16_t heading) {
     if (!_compass) return;
-    _heading.setTarget(heading, !hud::animate);
+    _heading.setTarget(heading, !hud::animate || !_hasHeading);
+    _hasHeading = true;
     _compassDirty = true;
     if (!hud::animate) layoutCompass();
   }
@@ -178,6 +179,7 @@ private:
   SmoothedValue _heading{3600.0f};
   int16_t _hdgBug = 0, _wpBearing = 0;
   bool _hasWaypoint = false;
+  bool _hasHeading = false;
   bool _compassDirty = true;
   uint32_t _lastTickMs = 0;
   int _shownHdg = -1;
