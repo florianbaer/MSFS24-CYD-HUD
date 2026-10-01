@@ -116,16 +116,16 @@ function Write-Step([string]$Title) {
   Write-Host ''
   Write-Host ("  [{0}/{1}] {2}" -f $script:StepNo, $script:StepCount, $Title) -ForegroundColor Cyan
   Write-Host ('  ' + ('-' * ($Title.Length + 6))) -ForegroundColor DarkGray
-  Write-Log "== $Title"
+  Add-InstallLog "== $Title"
 }
 
-function Write-Ok([string]$Text)   { Write-Host "    [ OK ] $Text" -ForegroundColor Green;  Write-Log "OK   $Text" }
-function Write-Info([string]$Text) { Write-Host "           $Text" -ForegroundColor Gray;   Write-Log "INFO $Text" }
-function Write-Warn([string]$Text) { Write-Host "    [WARN] $Text" -ForegroundColor Yellow; Write-Log "WARN $Text" }
-function Write-Fail([string]$Text) { Write-Host "    [FAIL] $Text" -ForegroundColor Red;    Write-Log "FAIL $Text" }
-function Write-Doing([string]$Text) { Write-Host "    ...    $Text" -ForegroundColor White;  Write-Log "DO   $Text" }
+function Write-Ok([string]$Text)   { Write-Host "    [ OK ] $Text" -ForegroundColor Green;  Add-InstallLog "OK   $Text" }
+function Write-Info([string]$Text) { Write-Host "           $Text" -ForegroundColor Gray;   Add-InstallLog "INFO $Text" }
+function Write-Warn([string]$Text) { Write-Host "    [WARN] $Text" -ForegroundColor Yellow; Add-InstallLog "WARN $Text" }
+function Write-Fail([string]$Text) { Write-Host "    [FAIL] $Text" -ForegroundColor Red;    Add-InstallLog "FAIL $Text" }
+function Write-Doing([string]$Text) { Write-Host "    ...    $Text" -ForegroundColor White;  Add-InstallLog "DO   $Text" }
 
-function Write-Log([string]$Text) {
+function Add-InstallLog([string]$Text) {
   try { Add-Content -Path $LogFile -Value ("{0:u} {1}" -f (Get-Date), $Text) -Encoding UTF8 } catch { }
 }
 
@@ -178,7 +178,7 @@ function Stop-Installer([string]$Reason) {
 # Returns $true on success.
 function Invoke-Tool([string]$Exe, [string[]]$Arguments, [string]$What, [hashtable]$Environment = @{}) {
   Write-Doing $What
-  Write-Log ("RUN  {0} {1}" -f $Exe, ($Arguments -join ' '))
+  Add-InstallLog ("RUN  {0} {1}" -f $Exe, ($Arguments -join ' '))
   $saved = @{}
   foreach ($k in $Environment.Keys) {
     $saved[$k] = [Environment]::GetEnvironmentVariable($k, 'Process')
@@ -195,7 +195,7 @@ function Invoke-Tool([string]$Exe, [string[]]$Arguments, [string]$What, [hashtab
     $ErrorActionPreference = $eap
     foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], 'Process') }
   }
-  $output | ForEach-Object { Write-Log "     $_" }
+  $output | ForEach-Object { Add-InstallLog "     $_" }
   if ($code -ne 0) {
     $output | Select-Object -Last 15 | ForEach-Object { Write-Host "           $_" -ForegroundColor DarkGray }
     return $false
@@ -215,7 +215,10 @@ function Get-Settings {
 }
 
 function Get-Setting($Settings, [string]$Name, $Default = $null) {
-  if ($Settings.PSObject.Properties.Name -contains $Name -and $Settings.$Name) { return $Settings.$Name }
+  # PSObject.Properties[...] instead of .Properties.Name: on an object without
+  # properties (first run) the latter throws under Set-StrictMode
+  $prop = $Settings.PSObject.Properties[$Name]
+  if ($prop -and $prop.Value) { return $prop.Value }
   return $Default
 }
 
@@ -393,11 +396,11 @@ function Get-DisplayIp([string]$ComPort, [int]$TimeoutSeconds = 40) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
       try { $line = $sp.ReadLine() } catch [TimeoutException] { continue }
-      Write-Log "     serial: $line"
+      Add-InstallLog "     serial: $line"
       if ($line -match 'Listening on (\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
     }
   } catch {
-    Write-Log "serial read failed: $_"
+    Add-InstallLog "serial read failed: $_"
   } finally {
     if ($sp.IsOpen) { $sp.Close() }
   }
@@ -676,7 +679,7 @@ function Invoke-Uninstall {
 if ($Uninstall) { Invoke-Uninstall; exit 0 }
 
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
-Write-Log "---- install started (PowerShell $($PSVersionTable.PSVersion)) ----"
+Add-InstallLog "---- install started (PowerShell $($PSVersionTable.PSVersion)) ----"
 Write-Banner
 
 if (-not (Test-Path (Join-Path $RepoRoot 'ship_hud\ship_hud.ino'))) {
@@ -810,4 +813,4 @@ Write-Host '  ==============================================================' -F
 Write-Host "   Re-run this installer to re-flash or switch USB/WiFi." -ForegroundColor DarkGray
 Write-Host "   Uninstall: Settings > Apps > $AppName" -ForegroundColor DarkGray
 Write-Host ''
-Write-Log '---- install finished ----'
+Add-InstallLog '---- install finished ----'

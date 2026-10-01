@@ -83,6 +83,10 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errors) | Out-Null
             if ($errors) { $errors | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }
           }
+      # Windows PowerShell 5.1 is what Install.cmd runs, so test with it
+      - name: Installer logic tests
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/installer/installer_test.ps1
       - name: Publish single-file exe
         run: >
           dotnet publish msfs-sender/MsfsHudSender/MsfsHudSender.csproj

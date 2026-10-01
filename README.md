@@ -144,7 +144,8 @@ The protocol is implemented twice and pinned by tests on both sides using the sa
 ├── Install.cmd                 # Double-click entry point for the installer
 ├── tests/
 │   ├── proto/                  # Host-side tests for the C++ decoder
-│   └── widgets/                # Host-side tests for widget helpers (smoothing)
+│   ├── widgets/                # Host-side tests for widget helpers (smoothing)
+│   └── installer/              # Tests for the installer logic (PowerShell)
 ├── tools/
 │   ├── screenshots/            # Renders the screens to docs/images/*.png
 │   └── sync_headers.sh         # Copies lib/ into ship_hud/
@@ -162,6 +163,9 @@ c++ -std=c++17 -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test && .
 
 # Display-side easing
 c++ -std=c++17 -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_test && ./smoothing_test
+
+# Installer logic (settings, display detection, exe.xml) without hardware
+pwsh -NoProfile -File tests/installer/installer_test.ps1
 
 # After editing anything in lib/, refresh the copies in the sketch folder
 tools/sync_headers.sh

@@ -338,6 +338,8 @@ void setup() {
   esp_task_wdt_add(NULL);
 
   lastDataMs = millis();
+  Serial.printf("Free heap: %u bytes (largest block %u)\n",
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
   Serial.println("HUD ready. Touch to cycle screens (7 modes). Waiting for data...");
 }
 

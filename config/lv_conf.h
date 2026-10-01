@@ -12,8 +12,15 @@
 
 #define LV_COLOR_DEPTH 16
 
-/* LVGL's own heap: all widgets of all 7 screens live in here. */
+/* Memory for all widgets of all 7 screens (~52 KB at peak with animations).
+ * On the ESP32 LVGL allocates from the system heap: a fixed pool would sit in
+ * static RAM, and the WiFi build has no room left there for one big enough.
+ * The desktop screenshot tool keeps LVGL's own pool so it can report usage. */
+#ifdef ARDUINO
+#define LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB
+#else
 #define LV_MEM_SIZE (64U * 1024U)
+#endif
 
 /* Render dirty areas up to ~60 times a second. Only changed regions are
  * redrawn, so static screens cost nothing; the gyro paces itself (~40 fps). */
