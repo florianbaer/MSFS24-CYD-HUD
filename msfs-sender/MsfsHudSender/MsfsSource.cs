@@ -31,7 +31,7 @@ public sealed class MsfsSource : IDisposable
     private struct FlightDataStruct { public double ias, altitude, vspeed, gs; }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct GForceData { public double ax, ay, az; }
+    private struct GForceData { public double gForce, accelBodyX, accelBodyZ; }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
     private struct AlertData { public double stallWarning, overspeedWarning, engOnFire; }
@@ -63,15 +63,20 @@ public sealed class MsfsSource : IDisposable
     private AutopilotData _ap;
     private int _engineCount = 1;
     private bool _apAvailable;
+    private bool _simQuit;
 
+    public static bool IsSupported => true;
     public int EngineCount => _engineCount;
     public bool AutopilotAvailable => _apAvailable;
+    /// <summary>True once MSFS has told us it is shutting down.</summary>
+    public bool SimQuit => _simQuit;
 
     public void Connect()
     {
         _sc = new SimConnect("MsfsHudSender", IntPtr.Zero, 0, null, 0);
         RegisterDataDefinitions();
         _sc.OnRecvSimobjectData += OnRecvData;
+        _sc.OnRecvQuit += (_, _) => _simQuit = true;
     }
 
     private void RegisterDataDefinitions()
@@ -83,7 +88,7 @@ public sealed class MsfsSource : IDisposable
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
         _sc.AddToDataDefinition(DataDef.Attitude, "PLANE BANK DEGREES", "radians",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Attitude, "PLANE HEADING DEGREES TRUE", "radians",
+        _sc.AddToDataDefinition(DataDef.Attitude, "PLANE HEADING DEGREES MAGNETIC", "radians",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
         _sc.RegisterDataDefineStruct<AttitudeData>(DataDef.Attitude);
 
@@ -116,10 +121,11 @@ public sealed class MsfsSource : IDisposable
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
         _sc.RegisterDataDefineStruct<FlightDataStruct>(DataDef.FlightData);
 
-        // G-force
-        _sc.AddToDataDefinition(DataDef.GForce, "ACCELERATION BODY X", "feet per second squared",
+        // G-force: load factor for the vertical axis (1.0 in level flight), body
+        // accelerations for the other two (body X = lateral, body Z = longitudinal)
+        _sc.AddToDataDefinition(DataDef.GForce, "G FORCE", "GForce",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.GForce, "ACCELERATION BODY Y", "feet per second squared",
+        _sc.AddToDataDefinition(DataDef.GForce, "ACCELERATION BODY X", "feet per second squared",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
         _sc.AddToDataDefinition(DataDef.GForce, "ACCELERATION BODY Z", "feet per second squared",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
@@ -152,7 +158,7 @@ public sealed class MsfsSource : IDisposable
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
         _sc.AddToDataDefinition(DataDef.Config, "GEAR HANDLE POSITION", "bool",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Config, "GEAR TOTAL PCT EXTENDED", "percent",
+        _sc.AddToDataDefinition(DataDef.Config, "GEAR TOTAL PCT EXTENDED", "percent over 100",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
         _sc.AddToDataDefinition(DataDef.Config, "ELEVATOR TRIM POSITION", "radians",
             SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
@@ -263,7 +269,7 @@ public sealed class MsfsSource : IDisposable
         Conversions.ConvertFlightData(_flight.ias, _flight.altitude, _flight.vspeed, _flight.gs);
 
     public (short gx, short gy, short gz) ReadGForce() =>
-        Conversions.ConvertGForce(_gforce.ax, _gforce.ay, _gforce.az);
+        Conversions.ConvertGForce(_gforce.gForce, _gforce.accelBodyX, _gforce.accelBodyZ);
 
     public ushort ReadAlerts()
     {
@@ -286,14 +292,18 @@ public sealed class MsfsSource : IDisposable
         var flags = Conversions.BuildApFlags(
             _ap.master > 0.5, _ap.hdgLock > 0.5, _ap.altLock > 0.5,
             _ap.vsLock > 0.5, _ap.navLock > 0.5, _ap.aprLock > 0.5);
-        return (flags, (int)_ap.altVar, (short)(_ap.hdgDir * 10));
+        var (alt, hdg) = Conversions.ConvertAutopilotTargets(_ap.altVar, _ap.hdgDir);
+        return (flags, alt, hdg);
     }
 
     public void Dispose() => _sc?.Dispose();
 #else
+    public static bool IsSupported => false;
     public int EngineCount => 1;
     public bool AutopilotAvailable => false;
-    public void Connect() => throw new PlatformNotSupportedException("SimConnect SDK not available. Set MSFS_SDK env var.");
+    public bool SimQuit => false;
+    public void Connect() => throw new PlatformNotSupportedException(
+        "This build was compiled without the MSFS SDK. Rebuild on Windows with MSFS_SDK set.");
     public void RequestData() { }
     public (short, short, short) ReadAttitude() => default;
     public (ushort, byte, byte, byte, byte) ReadEngine(int idx) => default;

@@ -10,8 +10,12 @@ public sealed class UdpTransport : IDisposable
 
     public UdpTransport(string host, int port = 4242)
     {
-        _client = new UdpClient();
-        _endpoint = new IPEndPoint(IPAddress.Parse(host), port);
+        // Accept both IP addresses and host names; the ESP32 only speaks IPv4
+        var address = Dns.GetHostAddresses(host)
+            .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+            ?? throw new ArgumentException($"'{host}' does not resolve to an IPv4 address");
+        _client = new UdpClient(AddressFamily.InterNetwork);
+        _endpoint = new IPEndPoint(address, port);
     }
 
     public void Write(byte[] data) => _client.Send(data, data.Length, _endpoint);

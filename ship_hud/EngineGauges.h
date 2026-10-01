@@ -53,6 +53,7 @@ public:
     lv_bar_set_range(_barThrottle, 0, 100);
     lv_bar_set_value(_barThrottle, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_barThrottle, lv_color_make(40, 40, 40), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_barThrottle, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(_barThrottle, lv_color_make(0, 180, 255), LV_PART_INDICATOR);
     lv_obj_set_style_radius(_barThrottle, 4, LV_PART_MAIN);
     lv_obj_set_style_radius(_barThrottle, 4, LV_PART_INDICATOR);
@@ -113,7 +114,7 @@ public:
     _lblFuelFlow = lv_label_create(parent);
     lv_obj_set_style_text_color(_lblFuelFlow, lv_color_make(200, 200, 0), 0);
     lv_obj_set_style_text_font(_lblFuelFlow, &lv_font_montserrat_14, 0);
-    lv_label_set_text(_lblFuelFlow, "FF: 0");
+    lv_label_set_text(_lblFuelFlow, "0.0 GPH");
     lv_obj_set_pos(_lblFuelFlow, 195, 170);
 
     lv_obj_t* ffUnit = lv_label_create(parent);
@@ -150,7 +151,9 @@ public:
     lv_arc_set_value(_arcOilTemp, oil_temp);
     lv_arc_set_value(_arcOilPress, oil_press);
 
-    snprintf(buf, sizeof(buf), "FF: %u", (unsigned)fuel_flow);
+    // Wire value 0..255 spans 0..50 GPH (see EngineMsg)
+    unsigned ffTenths = (unsigned)fuel_flow * 500 / 255;
+    snprintf(buf, sizeof(buf), "%u.%u GPH", ffTenths / 10, ffTenths % 10);
     lv_label_set_text(_lblFuelFlow, buf);
   }
 

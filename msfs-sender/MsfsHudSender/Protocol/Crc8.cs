@@ -1,6 +1,6 @@
 namespace MsfsHudSender.Protocol;
 
-/// <summary>CRC8/MAXIM checksum (polynomial 0x31, init 0x00).</summary>
+/// <summary>CRC-8 checksum: polynomial 0x31, init 0x00, MSB first (no reflection, no final XOR).</summary>
 public static class Crc8
 {
     private static readonly byte[] Table = BuildTable();

@@ -1,3 +1,5 @@
+using System.IO.Ports;
+using System.Runtime.InteropServices;
 using MsfsHudSender;
 using MsfsHudSender.Protocol;
 
@@ -8,34 +10,29 @@ int baud = 115200;
 int hz = 20;
 int udpPort = 4242;
 
+static int ParseOption(string name, string value, int min, int max)
+{
+    if (!int.TryParse(value, out var n) || n < min || n > max)
+    {
+        Console.Error.WriteLine($"Error: {name} must be {min}-{max}, got '{value}'");
+        Environment.Exit(1);
+    }
+    return n;
+}
+
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
     {
         case "--udp": udpMode = true; break;
         case "--baud" when i + 1 < args.Length:
-            baud = int.Parse(args[++i]);
-            if (baud < 9600 || baud > 921600)
-            {
-                Console.Error.WriteLine($"Error: baud rate must be 9600-921600, got {baud}");
-                Environment.Exit(1);
-            }
+            baud = ParseOption("baud rate", args[++i], 9600, 921600);
             break;
         case "--hz" when i + 1 < args.Length:
-            hz = int.Parse(args[++i]);
-            if (hz < 1 || hz > 60)
-            {
-                Console.Error.WriteLine($"Error: hz must be 1-60, got {hz}");
-                Environment.Exit(1);
-            }
+            hz = ParseOption("hz", args[++i], 1, 60);
             break;
         case "--port" when i + 1 < args.Length:
-            udpPort = int.Parse(args[++i]);
-            if (udpPort < 1 || udpPort > 65535)
-            {
-                Console.Error.WriteLine($"Error: port must be 1-65535, got {udpPort}");
-                Environment.Exit(1);
-            }
+            udpPort = ParseOption("port", args[++i], 1, 65535);
             break;
         case "--help" or "-h":
             Console.WriteLine("Usage: msfs-hud-sender <COM_PORT|HOST> [options]");
@@ -43,9 +40,15 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine("  --baud <rate>  Serial baud rate (default: 115200)");
             Console.WriteLine("  --hz <rate>    Send rate in Hz (default: 20)");
             Console.WriteLine("  --port <port>  UDP port (default: 4242)");
-            return;
+            return 0;
         default:
-            if (!args[i].StartsWith('-')) target = args[i];
+            if (args[i].StartsWith('-'))
+            {
+                Console.Error.WriteLine($"Error: unknown or incomplete option '{args[i]}'");
+                Console.Error.WriteLine("Run with --help for usage.");
+                return 1;
+            }
+            target = args[i];
             break;
     }
 }
@@ -54,49 +57,88 @@ if (string.IsNullOrEmpty(target))
 {
     Console.Error.WriteLine("Error: specify serial port (e.g. COM6) or host IP (with --udp)");
     Console.Error.WriteLine("Run with --help for usage.");
-    Environment.Exit(1);
+    return 1;
+}
+
+if (!MsfsSource.IsSupported)
+{
+    Console.Error.WriteLine("This build was compiled without the MSFS SDK and cannot talk to the simulator.");
+    Console.Error.WriteLine("Rebuild on Windows with the MSFS_SDK environment variable set (see docs/MSFS_PLUGIN.md).");
+    return 1;
 }
 
 // Set up transport
 Action<byte[]> write;
 IDisposable transport;
 
-if (udpMode)
-{
-    var udp = new UdpTransport(target, udpPort);
-    write = udp.Write;
-    transport = udp;
-    Console.WriteLine($"Sending via UDP to {target}:{udpPort} at {hz}Hz");
-}
-else
-{
-    var serial = new SerialTransport(target, baud);
-    write = serial.Write;
-    transport = serial;
-    Console.WriteLine($"Sending via serial {target} at {baud} baud, {hz}Hz");
-}
-
-// Connect to MSFS
-var source = new MsfsSource();
 try
 {
-    source.Connect();
+    if (udpMode)
+    {
+        var udp = new UdpTransport(target, udpPort);
+        write = udp.Write;
+        transport = udp;
+        Console.WriteLine($"Sending via UDP to {target}:{udpPort} at {hz}Hz");
+    }
+    else
+    {
+        var serial = new SerialTransport(target, baud);
+        write = serial.Write;
+        transport = serial;
+        Console.WriteLine($"Sending via serial {target} at {baud} baud, {hz}Hz");
+    }
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"Failed to connect to MSFS SimConnect: {ex.Message}");
-    Console.Error.WriteLine("Make sure MSFS 2024 is running and you are in a flight.");
-    transport.Dispose();
-    Environment.Exit(1);
+    Console.Error.WriteLine($"Could not open {(udpMode ? "UDP target" : "serial port")} '{target}': {ex.Message}");
+    if (!udpMode)
+        Console.Error.WriteLine($"Available ports: {string.Join(", ", SerialPort.GetPortNames())}");
+    return 1;
 }
 
-Console.WriteLine($"Connected. Engines: {source.EngineCount}, AP: {(source.AutopilotAvailable ? "yes" : "no")}");
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+// Connect to MSFS. The sender may be launched before the sim is ready
+// (e.g. from exe.xml), so keep trying until it answers.
+var source = new MsfsSource();
+bool announcedWaiting = false;
+while (!cts.IsCancellationRequested)
+{
+    try
+    {
+        source.Connect();
+        break;
+    }
+    catch (COMException)
+    {
+        if (!announcedWaiting)
+        {
+            Console.WriteLine("Waiting for MSFS 2024... (Ctrl+C to stop)");
+            announcedWaiting = true;
+        }
+        cts.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(2));
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Failed to connect to MSFS SimConnect: {ex.Message}");
+        transport.Dispose();
+        return 1;
+    }
+}
+
+if (cts.IsCancellationRequested)
+{
+    transport.Dispose();
+    return 0;
+}
+
+Console.WriteLine("Connected to MSFS.");
 Console.WriteLine("Sending: attitude, engine, flight, g-force, alerts, nav, config, autopilot");
 Console.WriteLine("Press Ctrl+C to stop");
 
 var interval = TimeSpan.FromMilliseconds(1000.0 / hz);
-var cts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+int exitCode = 0;
 
 try
 {
@@ -104,49 +146,53 @@ try
     {
         var start = DateTime.UtcNow;
 
-        try
+        source.RequestData();
+        if (source.SimQuit)
         {
-            source.RequestData();
-
-            var (pitch, roll, heading) = source.ReadAttitude();
-            write(FrameBuilder.FrameAttitude(pitch, roll, heading));
-
-            for (int i = 0; i < source.EngineCount; i++)
-            {
-                var (rpm, thr, ff, ot, op) = source.ReadEngine(i);
-                write(FrameBuilder.FrameEngine((byte)i, rpm, thr, ff, ot, op));
-            }
-
-            var (ias, alt, vs, gs) = source.ReadFlightData();
-            write(FrameBuilder.FrameFlightData(ias, alt, vs, gs));
-
-            var (gx, gy, gz) = source.ReadGForce();
-            write(FrameBuilder.FrameGForce(gx, gy, gz));
-
-            write(FrameBuilder.FrameAlerts(source.ReadAlerts()));
-
-            var (lat, lon, bug, dist, brg) = source.ReadNavData();
-            write(FrameBuilder.FrameNavData(lat, lon, bug, dist, brg));
-
-            var (flaps, gear, eTrim, rTrim) = source.ReadConfig();
-            write(FrameBuilder.FrameConfig(flaps, gear, eTrim, rTrim));
-
-            if (source.AutopilotAvailable)
-            {
-                var (apFlags, apAlt, apHdg) = source.ReadAutopilot();
-                write(FrameBuilder.FrameAutopilot(apFlags, apAlt, apHdg));
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Error: {ex}");
+            Console.WriteLine("MSFS has quit.");
+            break;
         }
 
-        var elapsed = DateTime.UtcNow - start;
-        var delay = interval - elapsed;
+        var (pitch, roll, heading) = source.ReadAttitude();
+        write(FrameBuilder.FrameAttitude(pitch, roll, heading));
+
+        for (int i = 0; i < source.EngineCount; i++)
+        {
+            var (rpm, thr, ff, ot, op) = source.ReadEngine(i);
+            write(FrameBuilder.FrameEngine((byte)i, rpm, thr, ff, ot, op));
+        }
+
+        var (ias, alt, vs, gs) = source.ReadFlightData();
+        write(FrameBuilder.FrameFlightData(ias, alt, vs, gs));
+
+        var (gx, gy, gz) = source.ReadGForce();
+        write(FrameBuilder.FrameGForce(gx, gy, gz));
+
+        write(FrameBuilder.FrameAlerts(source.ReadAlerts()));
+
+        var (lat, lon, bug, dist, brg) = source.ReadNavData();
+        write(FrameBuilder.FrameNavData(lat, lon, bug, dist, brg));
+
+        var (flaps, gear, eTrim, rTrim) = source.ReadConfig();
+        write(FrameBuilder.FrameConfig(flaps, gear, eTrim, rTrim));
+
+        if (source.AutopilotAvailable)
+        {
+            var (apFlags, apAlt, apHdg) = source.ReadAutopilot();
+            write(FrameBuilder.FrameAutopilot(apFlags, apAlt, apHdg));
+        }
+
+        var delay = interval - (DateTime.UtcNow - start);
         if (delay > TimeSpan.Zero)
-            Thread.Sleep(delay);
+            cts.Token.WaitHandle.WaitOne(delay);
     }
+}
+catch (Exception ex)
+{
+    // A failing link (sim crashed, cable unplugged) does not recover on its own;
+    // stop instead of logging the same error 20 times a second.
+    Console.Error.WriteLine($"Error: {ex.Message}");
+    exitCode = 1;
 }
 finally
 {
@@ -154,3 +200,5 @@ finally
     source.Dispose();
     transport.Dispose();
 }
+
+return exitCode;

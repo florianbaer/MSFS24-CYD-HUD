@@ -50,7 +50,7 @@ public:
     lv_obj_set_style_text_color(ftLabel, lv_color_make(100, 100, 100), 0);
     lv_obj_set_style_text_font(ftLabel, &lv_font_montserrat_10, 0);
     lv_label_set_text(ftLabel, "FT");
-    lv_obj_set_pos(ftLabel, 180, 130);
+    lv_obj_set_pos(ftLabel, 112, 134);
 
     // Target heading
     lv_obj_t* hdgTitle = lv_label_create(parent);
@@ -96,7 +96,7 @@ public:
 
     // Target heading (tenths → degrees)
     if (modeFlags & 0x02) { // HDG lock active
-      snprintf(buf, sizeof(buf), "%d", targetHdg / 10);
+      snprintf(buf, sizeof(buf), "%03d", targetHdg / 10);
       lv_label_set_text(_lblTargetHdg, buf);
     } else {
       lv_label_set_text(_lblTargetHdg, "---");

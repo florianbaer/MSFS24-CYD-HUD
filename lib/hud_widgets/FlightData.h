@@ -68,8 +68,10 @@ public:
     lv_obj_set_size(_barVspeed, 16, 140);
     lv_obj_set_pos(_barVspeed, 152, 32);
     lv_bar_set_range(_barVspeed, -3000, 3000);
+    lv_bar_set_mode(_barVspeed, LV_BAR_MODE_SYMMETRICAL); // grow up/down from zero
     lv_bar_set_value(_barVspeed, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_barVspeed, lv_color_make(40, 40, 40), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_barVspeed, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(_barVspeed, lv_color_make(0, 200, 0), LV_PART_INDICATOR);
     lv_obj_set_style_radius(_barVspeed, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(_barVspeed, 3, LV_PART_INDICATOR);

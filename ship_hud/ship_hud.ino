@@ -2,6 +2,8 @@
 // Receives COBS-framed binary telemetry via USB serial (or WiFi UDP)
 // Touch chip: CST816S on I2C
 // 7 screens: Gyro, Engine, Flight Data, G-Force, Nav, Config, Autopilot
+//
+// Builds with arduino-esp32 3.x (Arduino IDE / arduino-cli) and 2.x (PlatformIO).
 
 #include <lvgl.h>
 #include <TFT_eSPI.h>
@@ -21,6 +23,8 @@
 #define TFT_VER_RES   240
 #define DRAW_BUF_SIZE (TFT_HOR_RES * TFT_VER_RES / 10 * (LV_COLOR_DEPTH / 8))
 
+#define BACKLIGHT_PIN 27
+
 TFT_eSPI tft = TFT_eSPI();
 
 void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
@@ -33,16 +37,15 @@ void my_disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   lv_display_flush_ready(disp);
 }
 
+// LVGL time base
+static uint32_t lvgl_tick_cb() { return millis(); }
+
 // CST816S I2C touch
 #define TOUCH_SDA 33
 #define TOUCH_SCL 32
 #define TOUCH_INT 21
 #define TOUCH_RST 25
 #define CST816S_ADDR 0x15
-
-// Hardware timer for LVGL tick (1ms ISR — best practice for accurate animation timing)
-static void IRAM_ATTR lvgl_tick_isr() { lv_tick_inc(1); }
-hw_timer_t* lvgl_timer = nullptr;
 
 void touchInit() {
   pinMode(TOUCH_RST, OUTPUT);
@@ -78,8 +81,9 @@ bool touchRead(uint16_t *x, uint16_t *y) {
 void my_touchpad_read(lv_indev_t * indev, lv_indev_data_t * data) {
   uint16_t tx, ty;
   if (touchRead(&tx, &ty)) {
+    // Panel is mounted in portrait; rotate into the landscape UI
     data->point.x = ty;
-    data->point.y = TFT_VER_RES - tx;
+    data->point.y = TFT_VER_RES - 1 - tx;
     data->state = LV_INDEV_STATE_PRESSED;
   } else {
     data->state = LV_INDEV_STATE_RELEASED;
@@ -115,7 +119,7 @@ lv_obj_t* lblNoData = nullptr;
 
 #ifdef WIFI_ENABLED
 WiFiUDP udp;
-bool wifiConnected = false;
+bool udpListening = false;
 #endif
 
 void handleAttitude(const uint8_t* payload, int len) {
@@ -198,16 +202,26 @@ void processFrame() {
 void toggleMode() {
   currentScreen = (currentScreen + 1) % NUM_SCREENS;
   if (screens[currentScreen]) {
-    lv_scr_load(screens[currentScreen]);
+    lv_screen_load(screens[currentScreen]);
   }
 }
 
+static lv_obj_t* newScreen() {
+  lv_obj_t* scr = lv_obj_create(NULL);
+  lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+  // A tap cycles screens; never let a drag scroll the layout
+  lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+  return scr;
+}
+
 void setup() {
+  // One telemetry burst must fit while a screen redraw blocks the loop
+  Serial.setRxBufferSize(1024);
   Serial.begin(115200);
   Serial.println("Starting HUD...");
 
-  pinMode(27, OUTPUT);
-  digitalWrite(27, HIGH);
+  pinMode(BACKLIGHT_PIN, OUTPUT);
+  digitalWrite(BACKLIGHT_PIN, HIGH);
   touchInit();
 
   tft.init();
@@ -215,11 +229,7 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
 
   lv_init();
-
-  // Start 1ms hardware timer for LVGL ticks
-  lvgl_timer = timerBegin(1000000); // 1MHz
-  timerAttachInterrupt(lvgl_timer, lvgl_tick_isr);
-  timerAlarm(lvgl_timer, 1000, true, 0); // 1ms interval, auto-reload
+  lv_tick_set_cb(lvgl_tick_cb);
 
   uint8_t* draw_buf = new uint8_t[DRAW_BUF_SIZE];
   lv_display_t * disp = lv_display_create(TFT_HOR_RES, TFT_VER_RES);
@@ -230,44 +240,22 @@ void setup() {
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, my_touchpad_read);
 
+  // Screens: keep in sync with tools/screenshots/main.cpp
+  for (int i = 0; i < NUM_SCREENS; i++) screens[i] = newScreen();
+
   // ---- Screen 0: MSFS Gyroscope ----
-  screens[0] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[0], lv_color_black(), 0);
   GyroHorizonConfig gyroCfg;
   gyroCfg.cx = 160;
   gyroCfg.cy = 105;
   gyroCfg.radius = 90;
   gyro.create(screens[0], gyroCfg);
 
-  // ---- Screen 1: MSFS Engine Gauges ----
-  screens[1] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[1], lv_color_black(), 0);
-  engine.create(screens[1]);
-
-  // ---- Screen 2: MSFS Flight Data ----
-  screens[2] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[2], lv_color_black(), 0);
-  flightData.create(screens[2]);
-
-  // ---- Screen 3: MSFS G-Force Meter ----
-  screens[3] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[3], lv_color_black(), 0);
-  gforce.create(screens[3]);
-
-  // ---- Screen 4: MSFS Navigation ----
-  screens[4] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[4], lv_color_black(), 0);
-  nav.create(screens[4]);
-
-  // ---- Screen 5: MSFS Aircraft Config ----
-  screens[5] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[5], lv_color_black(), 0);
-  config.create(screens[5]);
-
-  // ---- Screen 6: MSFS Autopilot ----
-  screens[6] = lv_obj_create(NULL);
-  lv_obj_set_style_bg_color(screens[6], lv_color_black(), 0);
-  autopilot.create(screens[6]);
+  engine.create(screens[1]);      // Screen 1: MSFS Engine Gauges
+  flightData.create(screens[2]);  // Screen 2: MSFS Flight Data
+  gforce.create(screens[3]);      // Screen 3: MSFS G-Force Meter
+  nav.create(screens[4]);         // Screen 4: MSFS Navigation
+  config.create(screens[5]);      // Screen 5: MSFS Aircraft Config
+  autopilot.create(screens[6]);   // Screen 6: MSFS Autopilot
 
   // ---- Alert overlay (on top of all screens) ----
   alert.create(lv_layer_top());
@@ -280,30 +268,24 @@ void setup() {
   lv_obj_align(lblNoData, LV_ALIGN_BOTTOM_MID, 0, -5);
   // Start visible until first data arrives
 
-  lv_scr_load(screens[0]);
+  lv_screen_load(screens[0]);
 
 #ifdef WIFI_ENABLED
+  // Non-blocking: loop() starts listening once the connection is up,
+  // and again after every reconnect.
   Serial.printf("Connecting to WiFi '%s'...\n", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\nWiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
-    udp.begin(UDP_PORT);
-    Serial.printf("UDP listening on port %d\n", UDP_PORT);
-    wifiConnected = true;
-  } else {
-    Serial.println("\nWiFi connection failed. Using serial only.");
-  }
 #endif
 
   // Hardware watchdog: reset device if loop hangs for >5s
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
   esp_task_wdt_config_t wdt_cfg = { .timeout_ms = 5000, .idle_core_mask = 0, .trigger_panic = true };
-  esp_task_wdt_init(&wdt_cfg);
+  // The 3.x core starts the task watchdog itself; init only succeeds if it did not
+  if (esp_task_wdt_reconfigure(&wdt_cfg) != ESP_OK) esp_task_wdt_init(&wdt_cfg);
+#else
+  esp_task_wdt_init(5, true);
+#endif
   esp_task_wdt_add(NULL);
 
   lastDataMs = millis();
@@ -321,10 +303,15 @@ void loop() {
   }
 
 #ifdef WIFI_ENABLED
-  if (wifiConnected) {
-    // Feed UDP bytes to frame decoder
-    int packetSize = udp.parsePacket();
-    if (packetSize > 0) {
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!udpListening) {
+      udp.begin(UDP_PORT);
+      udpListening = true;
+      Serial.printf("WiFi connected. Listening on %s:%d (UDP)\n",
+                    WiFi.localIP().toString().c_str(), UDP_PORT);
+    }
+    // Feed UDP bytes to frame decoder (the sender emits one frame per datagram)
+    while (udp.parsePacket() > 0) {
       uint8_t buf[72];
       int len = udp.read(buf, sizeof(buf));
       for (int i = 0; i < len; i++) {
@@ -332,6 +319,10 @@ void loop() {
         if (decoder.available()) processFrame();
       }
     }
+  } else if (udpListening) {
+    udp.stop();
+    udpListening = false;
+    Serial.println("WiFi lost, reconnecting...");
   }
 #endif
 

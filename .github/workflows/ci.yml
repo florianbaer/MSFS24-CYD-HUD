@@ -7,42 +7,67 @@ on:
     branches: [master, main]
 
 jobs:
-  esp32-compile:
+  firmware:
     name: Compile ESP32 sketch
     runs-on: ubuntu-latest
+    env:
+      ESP32_INDEX: https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      ESP32_CORE: 3.3.12
     steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/compile-sketches@v1
-        with:
-          fqbn: esp32:esp32:esp32
-          platforms: |
-            - name: esp32:esp32
-              version: 3.2.0
-              source-url: https://espressif.github.io/arduino-esp32/package_esp32_index.json
-          sketch-paths: ship_hud
-          libraries: |
-            - name: lvgl
-              version: 9.2.2
-            - name: TFT_eSPI
-              version: 2.5.43
+      - uses: actions/checkout@v7
+      - name: Sketch headers match lib/
+        run: tools/sync_headers.sh --check
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls "$ESP32_INDEX"
+          arduino-cli core install "esp32:esp32@$ESP32_CORE" --additional-urls "$ESP32_INDEX"
+          arduino-cli lib install "lvgl@9.2.2" "TFT_eSPI@2.5.43"
+      - name: Apply display and LVGL configuration
+        run: |
+          LIBS="$(arduino-cli config get directories.user)/libraries"
+          cp config/lv_conf.h "$LIBS/lv_conf.h"
+          cp config/User_Setup.h "$LIBS/TFT_eSPI/User_Setup.h"
+      - name: Compile (USB serial only)
+        run: arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
+      - name: Compile (with WiFi)
+        run: |
+          cp ship_hud/wifi_config.h.example ship_hud/wifi_config.h
+          arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
+
+  host-tests:
+    name: Protocol decoder & widget rendering (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Protocol decoder tests
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test
+          ./decoder_test
+      - name: Render all screens
+        run: make -C tools/screenshots -j4 OUT="$RUNNER_TEMP/screens"
 
   msfs-sender-test:
     name: Protocol & conversion tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - run: dotnet test msfs-sender/ --verbosity normal
 
+  # Compile check only. SimConnect ships with the MSFS SDK, which is not available
+  # on the runner, so an exe built here cannot connect to the simulator and is
+  # deliberately not published as an artifact. Build a usable exe on a machine
+  # with the SDK installed (see docs/MSFS_PLUGIN.md).
   msfs-sender-build:
-    name: Build sender (.exe)
+    name: Build sender (Windows, without SimConnect)
     runs-on: windows-latest
     needs: msfs-sender-test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - name: Publish single-file exe
@@ -51,7 +76,3 @@ jobs:
           -c Release -r win-x64 --self-contained
           -p:PublishSingleFile=true
           -o publish
-      - uses: actions/upload-artifact@v4
-        with:
-          name: msfs-hud-sender
-          path: publish/msfs-hud-sender.exe

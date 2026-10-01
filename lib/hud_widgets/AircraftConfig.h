@@ -29,6 +29,7 @@ public:
     lv_bar_set_range(_barFlaps, 0, 100);
     lv_bar_set_value(_barFlaps, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_barFlaps, lv_color_make(40, 40, 40), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_barFlaps, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(_barFlaps, lv_color_make(0, 200, 0), LV_PART_INDICATOR);
     lv_obj_set_style_radius(_barFlaps, 4, LV_PART_MAIN);
     lv_obj_set_style_radius(_barFlaps, 4, LV_PART_INDICATOR);
@@ -57,14 +58,16 @@ public:
     lv_obj_set_style_text_color(eTrimTitle, lv_color_make(100, 100, 100), 0);
     lv_obj_set_style_text_font(eTrimTitle, &lv_font_montserrat_10, 0);
     lv_label_set_text(eTrimTitle, "ELEV TRIM");
-    lv_obj_set_pos(eTrimTitle, 195, 22);
+    lv_obj_set_pos(eTrimTitle, 250, 22);
 
     _barElevTrim = lv_bar_create(parent);
     lv_obj_set_size(_barElevTrim, 16, 120);
-    lv_obj_set_pos(_barElevTrim, 215, 36);
+    lv_obj_set_pos(_barElevTrim, 270, 36);
     lv_bar_set_range(_barElevTrim, -100, 100);
+    lv_bar_set_mode(_barElevTrim, LV_BAR_MODE_SYMMETRICAL); // grow from neutral
     lv_bar_set_value(_barElevTrim, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_barElevTrim, lv_color_make(40, 40, 40), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_barElevTrim, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(_barElevTrim, lv_color_make(0, 180, 255), LV_PART_INDICATOR);
     lv_obj_set_style_radius(_barElevTrim, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(_barElevTrim, 3, LV_PART_INDICATOR);
@@ -73,7 +76,7 @@ public:
     lv_obj_set_style_text_color(_lblElevTrim, lv_color_make(0, 180, 255), 0);
     lv_obj_set_style_text_font(_lblElevTrim, &lv_font_montserrat_12, 0);
     lv_label_set_text(_lblElevTrim, "0");
-    lv_obj_set_pos(_lblElevTrim, 210, 160);
+    lv_obj_set_pos(_lblElevTrim, 268, 160);
 
     // ---- Rudder trim (bottom, horizontal bar) ----
     lv_obj_t* rTrimTitle = lv_label_create(parent);
@@ -83,11 +86,13 @@ public:
     lv_obj_set_pos(rTrimTitle, 80, 115);
 
     _barRudderTrim = lv_bar_create(parent);
-    lv_obj_set_size(_barRudderTrim, 160, 14);
+    lv_obj_set_size(_barRudderTrim, 140, 14);
     lv_obj_set_pos(_barRudderTrim, 70, 130);
     lv_bar_set_range(_barRudderTrim, -100, 100);
+    lv_bar_set_mode(_barRudderTrim, LV_BAR_MODE_SYMMETRICAL); // grow from neutral
     lv_bar_set_value(_barRudderTrim, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_barRudderTrim, lv_color_make(40, 40, 40), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_barRudderTrim, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(_barRudderTrim, lv_color_make(200, 200, 0), LV_PART_INDICATOR);
     lv_obj_set_style_radius(_barRudderTrim, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(_barRudderTrim, 3, LV_PART_INDICATOR);
@@ -96,7 +101,7 @@ public:
     lv_obj_set_style_text_color(_lblRudderTrim, lv_color_make(200, 200, 0), 0);
     lv_obj_set_style_text_font(_lblRudderTrim, &lv_font_montserrat_12, 0);
     lv_label_set_text(_lblRudderTrim, "0");
-    lv_obj_set_pos(_lblRudderTrim, 240, 127);
+    lv_obj_set_pos(_lblRudderTrim, 216, 129);
   }
 
   void setValue(uint8_t flapsPct, uint8_t gearState, int8_t elevTrim, int8_t rudderTrim) {

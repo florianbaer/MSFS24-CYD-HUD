@@ -2,18 +2,36 @@
 
 A companion app that reads flight data from Microsoft Flight Simulator 2024 via the native SimConnect C# API and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 7 HUD screens.
 
-## Installation (Pre-built .exe)
+## Requirements
 
-1. Download `msfs-hud-sender.exe` from the latest [GitHub Actions build](../../actions)
-2. Connect your ESP32 display via USB
-3. Start MSFS 2024 and load into a flight
-4. Run:
+- **Windows 10/11** with MSFS 2024
+- **.NET 10 SDK**
+- **MSFS 2024 SDK** — it provides the SimConnect libraries. They cannot be downloaded separately, which is why there is no pre-built download: an exe built without the SDK (for example by this repository's CI) starts, but can only report that SimConnect is missing.
+
+## Building
+
+```sh
+:: Point MSFS_SDK at your SDK installation (the folder that contains "SimConnect SDK")
+set MSFS_SDK=C:\MSFS 2024 SDK
+
+cd msfs-sender
+dotnet publish MsfsHudSender/MsfsHudSender.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o publish
+```
+
+This produces `publish/msfs-hud-sender.exe` with `SimConnect.dll` next to it; keep the two files together. If the build prints *"MSFS SDK not found"*, `MSFS_SDK` does not point at the SDK.
+
+For development, `dotnet run --project MsfsHudSender -- COM6` works as well.
+
+## Running
+
+1. Connect your ESP32 display via USB
+2. Run:
 
 ```
 msfs-hud-sender.exe COM6
 ```
 
-That's it. The exe is a standalone Windows executable — no runtime dependencies needed.
+The sender can be started before or after MSFS: it waits until the simulator answers, starts streaming, and exits when MSFS quits. Data only becomes meaningful once you are in a flight.
 
 ### Options
 
@@ -25,8 +43,8 @@ msfs-hud-sender.exe 192.168.1.50 --udp --port 4242
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--baud` | 115200 | Serial baud rate |
-| `--hz` | 20 | Send rate in Hz |
-| `--udp` | — | Use UDP transport instead of serial |
+| `--hz` | 20 | Send rate in Hz (1-60) |
+| `--udp` | — | Use UDP transport instead of serial; the target is the display's IP address or host name |
 | `--port` | 4242 | UDP port (with --udp) |
 
 ## Auto-start with MSFS
@@ -58,27 +76,6 @@ If the file doesn't exist, create it. If it already exists, just add the `<Launc
 
 Replace `C:\Your\Path\` with the actual folder where you saved the exe, and `COM6` with your ESP32 serial port.
 
-## Building from Source
-
-Requires **Windows 10/11**, **.NET 9+ SDK**, and **MSFS 2024 SDK** (for SimConnect DLL).
-
-```sh
-# Set MSFS_SDK environment variable to your SDK installation path
-set MSFS_SDK=C:\MSFS SDK
-
-cd msfs-sender
-dotnet build
-dotnet run --project MsfsHudSender -- COM6
-```
-
-### Building the .exe
-
-```sh
-cd msfs-sender
-dotnet publish MsfsHudSender/MsfsHudSender.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o publish
-# Output: publish/msfs-hud-sender.exe
-```
-
 ## Display Screens
 
 The ESP32 display has 7 screens cycled by touch tap:
@@ -99,15 +96,15 @@ Alert warnings (stall, overspeed, gear unsafe, engine fire) overlay on all scree
 
 ## How It Works
 
-1. The sender connects to MSFS via the native SimConnect C# API
-2. Each loop reads all flight data (attitude, engine, flight, G-force, alerts, nav, config, autopilot)
+1. The sender connects to MSFS via the managed SimConnect API
+2. Each loop reads all flight data (attitude, engine, flight, G-force, alerts, nav, config, autopilot) and converts it to the wire units — e.g. SimConnect reports pitch positive nose-down, the wire format is positive nose-up; vertical G is the load factor (1.0 in level flight); heading is magnetic
 3. Values are packed into binary protocol messages and framed with COBS encoding + CRC8 checksum
 4. All frames are sent over USB serial (or WiFi UDP) to the ESP32 at the configured Hz rate
 5. The ESP32 dispatches each message to the appropriate widget
 
 ## Protocol
 
-Eight message types are sent every cycle. Wire format: `[0x00] [COBS-encoded: msg_type | payload | CRC8] [0x00]`
+Eight message types are sent every cycle (Autopilot only for aircraft that have one; Engine once per engine, the display shows engine 1). Wire format: `[0x00] [COBS-encoded: msg_type | payload | CRC8] [0x00]`
 
 | ID | Name | Payload | Size |
 |----|------|---------|------|
@@ -124,14 +121,20 @@ All multi-byte fields are little-endian.
 
 ## Troubleshooting
 
-**"SimConnect connection failed"**
--> Make sure MSFS 2024 is running and you're in a flight (not the main menu).
+**"Waiting for MSFS 2024..." never goes away**
+-> MSFS is not running, or SimConnect is not reachable. The sender keeps retrying every 2 seconds.
 
-**Serial port not found**
--> Check the port name in Device Manager. On Windows it's typically `COM3`-`COM9`.
+**"This build was compiled without the MSFS SDK"**
+-> The exe was built without `MSFS_SDK` set. Rebuild as described under [Building](#building).
+
+**"Unable to load DLL 'SimConnect.dll'"**
+-> `SimConnect.dll` must be in the same folder as `msfs-hud-sender.exe`.
+
+**"Could not open serial port"**
+-> The sender lists the ports it can see. Check the port name in Device Manager and close anything else that has the port open (Arduino serial monitor, `pio device monitor`).
 
 **No data on display**
 -> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Tap to cycle through all 7 screens.
 
 **WiFi not connecting**
--> Copy `wifi_config.h.example` to `wifi_config.h`, fill in your credentials, and reflash the ESP32 firmware.
+-> Copy `wifi_config.h.example` to `wifi_config.h`, fill in your credentials, and reflash the ESP32 firmware. See [SETUP.md](SETUP.md#wifi-optional).

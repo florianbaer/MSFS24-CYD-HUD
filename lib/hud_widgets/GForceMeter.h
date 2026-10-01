@@ -59,8 +59,10 @@ public:
     lv_obj_set_size(_barLatG, 200, 14);
     lv_obj_set_pos(_barLatG, 10, 205);
     lv_bar_set_range(_barLatG, -200, 200); // -2G to +2G
+    lv_bar_set_mode(_barLatG, LV_BAR_MODE_SYMMETRICAL); // grow left/right from zero
     lv_bar_set_value(_barLatG, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_barLatG, lv_color_make(40, 40, 40), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(_barLatG, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(_barLatG, lv_color_make(0, 180, 255), LV_PART_INDICATOR);
     lv_obj_set_style_radius(_barLatG, 3, LV_PART_MAIN);
     lv_obj_set_style_radius(_barLatG, 3, LV_PART_INDICATOR);

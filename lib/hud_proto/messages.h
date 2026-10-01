@@ -14,9 +14,9 @@ enum MsgType : uint8_t {
 
 /// Attitude message payload (PC -> ESP32).
 struct __attribute__((packed)) AttitudeMsg {
-  int16_t pitch;    // tenths of degrees, -1800..+1800
-  int16_t roll;     // tenths of degrees, -1800..+1800
-  int16_t heading;  // tenths of degrees, 0..3599
+  int16_t pitch;    // tenths of degrees, -1800..+1800, positive = nose up
+  int16_t roll;     // tenths of degrees, -1800..+1800, positive = left wing down
+  int16_t heading;  // tenths of degrees, 0..3599, magnetic
 };
 
 /// Engine gauges message payload (PC -> ESP32).
@@ -24,9 +24,9 @@ struct __attribute__((packed)) EngineMsg {
   uint8_t  engine_idx;  // 0-based engine index (0..3)
   uint16_t rpm;
   uint8_t  throttle;    // 0-100 %
-  uint8_t  fuel_flow;   // 0-255 mapped
-  uint8_t  oil_temp;    // 0-255 mapped
-  uint8_t  oil_press;   // 0-255 mapped
+  uint8_t  fuel_flow;   // 0-255 = 0..50 GPH
+  uint8_t  oil_temp;    // 0-255 = 0..250 °F
+  uint8_t  oil_press;   // 0-255 = 0..100 PSI
 };
 
 /// Flight data message payload (PC -> ESP32).
@@ -40,7 +40,7 @@ struct __attribute__((packed)) FlightDataMsg {
 /// G-force message payload (PC -> ESP32).
 struct __attribute__((packed)) GForceMsg {
   int16_t gforce_x;  // hundredths of G (longitudinal)
-  int16_t gforce_y;  // hundredths of G (vertical, ~100 = 1G level)
+  int16_t gforce_y;  // hundredths of G (vertical load factor, 100 = 1G level)
   int16_t gforce_z;  // hundredths of G (lateral)
 };
 

@@ -6,17 +6,23 @@ public static class Conversions
     private const double RadToDeg = 180.0 / Math.PI;
     private const double GConv = 32.174; // 1G in ft/s²
 
+    /// <summary>Degrees → tenths of degrees, wrapped into 0..3599.</summary>
+    private static short HeadingTenths(double deg) =>
+        (short)(((int)Math.Round(deg * 10) % 3600 + 3600) % 3600);
+
+    /// <summary>
+    /// SimConnect reports pitch positive nose-down and bank positive left-wing-down.
+    /// The wire format uses positive pitch = nose up; roll keeps the SimConnect sign.
+    /// </summary>
     public static (short pitch, short roll, short heading) ConvertAttitude(
         double pitchRad, double rollRad, double headingRad)
     {
-        var pitchDeg = pitchRad * RadToDeg;
+        var pitchDeg = -pitchRad * RadToDeg;
         var rollDeg = rollRad * RadToDeg;
-        var headingDeg = headingRad * RadToDeg;
 
-        var pitch = (short)Math.Clamp((int)(pitchDeg * 10), -1800, 1800);
-        var roll = (short)Math.Clamp((int)(rollDeg * 10), -1800, 1800);
-        var heading = (short)(((int)(headingDeg * 10) % 3600 + 3600) % 3600);
-        return (pitch, roll, heading);
+        var pitch = (short)Math.Clamp((int)Math.Round(pitchDeg * 10), -1800, 1800);
+        var roll = (short)Math.Clamp((int)Math.Round(rollDeg * 10), -1800, 1800);
+        return (pitch, roll, HeadingTenths(headingRad * RadToDeg));
     }
 
     public static (ushort rpm, byte throttle, byte fuelFlow, byte oilTemp, byte oilPress) ConvertEngine(
@@ -28,7 +34,7 @@ public static class Conversions
         // Map fuel flow (0-50 GPH typical) to 0-255
         var fuelFlow = (byte)Math.Clamp((int)(ffGph * 255 / 50), 0, 255);
         // Oil temp: Rankine → °F → 0-255 (0-250°F range)
-        var oilTempF = oilTempRankine / 1.8 - 459.67 / 1.8; // Rankine to Fahrenheit
+        var oilTempF = oilTempRankine - 459.67;
         var oilTemp = (byte)Math.Clamp((int)(oilTempF * 255 / 250), 0, 255);
         // Oil pressure: Psf → PSI (÷144) → 0-255 (0-100 PSI range)
         var oilPressPsi = oilPressPsf / 144.0;
@@ -46,13 +52,17 @@ public static class Conversions
         return (airspeed, altitude, vspeed, groundSpeed);
     }
 
+    /// <summary>
+    /// gy is the load factor (G FORCE, 1.0 in level flight). gx/gz come from the body
+    /// accelerations: SimConnect's body X axis is lateral, body Z is longitudinal.
+    /// </summary>
     public static (short gx, short gy, short gz) ConvertGForce(
-        double axFtS2, double ayFtS2, double azFtS2)
+        double gForce, double accelBodyXFtS2, double accelBodyZFtS2)
     {
-        var gx = (short)Math.Clamp((int)(axFtS2 / GConv * 100), short.MinValue, short.MaxValue);
-        var gy = (short)Math.Clamp((int)(ayFtS2 / GConv * 100), short.MinValue, short.MaxValue);
-        var gz = (short)Math.Clamp((int)(azFtS2 / GConv * 100), short.MinValue, short.MaxValue);
-        return (gx, gy, gz);
+        static short Hundredths(double g) =>
+            (short)Math.Clamp((int)Math.Round(g * 100), short.MinValue, short.MaxValue);
+
+        return (Hundredths(accelBodyZFtS2 / GConv), Hundredths(gForce), Hundredths(accelBodyXFtS2 / GConv));
     }
 
     public static (int lat, int lon, short hdgBug, ushort wpDist, short wpBearing) ConvertNavData(
@@ -60,10 +70,10 @@ public static class Conversions
     {
         var lat = (int)Math.Clamp(latRad * RadToDeg * 1e7, int.MinValue, int.MaxValue);
         var lon = (int)Math.Clamp(lonRad * RadToDeg * 1e7, int.MinValue, int.MaxValue);
-        var hdgBug = (short)(((int)(hdgBugDeg * 10) % 3600 + 3600) % 3600);
+        var hdgBug = HeadingTenths(hdgBugDeg);
         // Meters → nautical miles × 10
         var wpDist = (ushort)Math.Clamp((int)(wpDistMeters / 1852.0 * 10), 0, 65535);
-        var wpBearing = (short)(((int)(wpBearingDeg * 10) % 3600 + 3600) % 3600);
+        var wpBearing = HeadingTenths(wpBearingDeg);
         return (lat, lon, hdgBug, wpDist, wpBearing);
     }
 
@@ -72,6 +82,7 @@ public static class Conversions
         double elevTrimRad, double rudderTrimPct)
     {
         var flaps = (byte)Math.Clamp((int)flapsPct, 0, 100);
+        // gearExtended is a 0..1 fraction ("percent over 100").
         // Gear: handle=0 and extended<0.01 → up(0), extended>=0.99 → down(2), else transit(1)
         byte gear;
         if (gearHandle == 0 && gearExtended < 0.01) gear = 0;
@@ -82,6 +93,12 @@ public static class Conversions
         // Rudder trim: already percent -100..+100
         var rTrim = (sbyte)Math.Clamp((int)rudderTrimPct, -100, 100);
         return (flaps, gear, eTrim, rTrim);
+    }
+
+    public static (int targetAlt, short targetHdg) ConvertAutopilotTargets(double altFt, double hdgDeg)
+    {
+        var alt = (int)Math.Clamp(altFt, int.MinValue, int.MaxValue);
+        return (alt, HeadingTenths(hdgDeg));
     }
 
     public static ushort BuildAlertFlags(bool stall, bool overspeed, bool gearUnsafe,

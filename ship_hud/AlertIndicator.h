@@ -3,11 +3,10 @@
 #include <Arduino.h>
 
 struct AlertIndicatorConfig {
-  int x = 130;
-  int y = 2;
+  int y = 0;             // offset from the top edge; horizontally centred
   uint32_t blinkMs = 500;
   int ledPin = 4;        // red LED pin (-1 to disable)
-  uint8_t ledChannel = 0;
+  uint8_t ledChannel = 0; // only used by arduino-esp32 2.x
 };
 
 /// Priority-based alert overlay. Shows highest-priority active alert.
@@ -16,20 +15,29 @@ class AlertIndicator {
 public:
   AlertIndicator()
     : _lbl(nullptr), _flags(0), _prevFlags(0), _visible(false), _lastBlink(0),
-      _beatIndex(0), _stepIndex(0), _stepTime(0), _seqActive(false) {}
+      _seqActive(false), _beatIndex(0), _stepIndex(0), _stepTime(0) {}
 
   void create(lv_obj_t* parent, const AlertIndicatorConfig& cfg = {}) {
     _cfg = cfg;
     _lbl = lv_label_create(parent);
     lv_obj_set_style_text_font(_lbl, &lv_font_montserrat_14, 0);
     lv_label_set_text(_lbl, "");
-    lv_obj_set_pos(_lbl, cfg.x, cfg.y);
+    // Opaque backdrop: the alert sits on top of the screen titles
+    lv_obj_set_style_bg_color(_lbl, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(_lbl, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_hor(_lbl, 8, 0);
+    lv_obj_set_style_pad_ver(_lbl, 2, 0);
+    lv_obj_align(_lbl, LV_ALIGN_TOP_MID, 0, cfg.y);
     lv_obj_add_flag(_lbl, LV_OBJ_FLAG_HIDDEN);
 
     if (cfg.ledPin >= 0) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+      ledcAttach(cfg.ledPin, 5000, 8);
+#else
       ledcSetup(cfg.ledChannel, 5000, 8);
       ledcAttachPin(cfg.ledPin, cfg.ledChannel);
-      ledcWrite(cfg.ledChannel, 255); // off (active low)
+#endif
+      ledSet(255); // off (active low)
     }
   }
 
@@ -52,8 +60,8 @@ public:
   }
 
   void tick(uint32_t now) {
-    // Trigger heartbeat on new alert activation
-    if (_flags && !(_prevFlags & _flags)) {
+    // Trigger heartbeat whenever an alert that was not active before comes on
+    if (_flags & ~_prevFlags) {
       _seqActive = true;
       _beatIndex = 0;
       _stepIndex = 0;
@@ -144,7 +152,12 @@ private:
   uint32_t _stepTime;
 
   void ledSet(uint8_t duty) {
+    if (_cfg.ledPin < 0) return;
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    ledcWrite(_cfg.ledPin, duty);
+#else
     ledcWrite(_cfg.ledChannel, duty);
+#endif
   }
 };
 

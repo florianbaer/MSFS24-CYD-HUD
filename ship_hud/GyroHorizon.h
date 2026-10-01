@@ -1,6 +1,9 @@
 #pragma once
 #include <lvgl.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <new>
 
 struct GyroHorizonConfig {
   int cx = 160;
@@ -54,7 +57,7 @@ public:
     lv_obj_set_style_text_color(_modeLabel, lv_color_make(100, 100, 100), 0);
     lv_obj_set_style_text_font(_modeLabel, &lv_font_montserrat_10, 0);
     lv_label_set_text(_modeLabel, "MSFS GYRO");
-    lv_obj_set_pos(_modeLabel, cfg.cx - 25, cfg.cy - cfg.radius - 16);
+    lv_obj_set_pos(_modeLabel, cfg.cx - 30, cfg.cy - cfg.radius - 13);
 
     draw(0, 0, 0);
   }

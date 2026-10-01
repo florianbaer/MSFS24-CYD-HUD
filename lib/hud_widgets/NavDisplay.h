@@ -72,7 +72,7 @@ public:
     lv_obj_set_style_text_color(nmLabel, lv_color_make(100, 100, 100), 0);
     lv_obj_set_style_text_font(nmLabel, &lv_font_montserrat_10, 0);
     lv_label_set_text(nmLabel, "NM");
-    lv_obj_set_pos(nmLabel, 270, 72);
+    lv_obj_set_pos(nmLabel, 190, 72);
 
     // Waypoint bearing
     lv_obj_t* brgTitle = lv_label_create(parent);
@@ -112,7 +112,7 @@ public:
     lv_label_set_text(_lblLon, buf);
 
     // Heading bug (tenths → degrees)
-    snprintf(buf, sizeof(buf), "%d", hdgBug / 10);
+    snprintf(buf, sizeof(buf), "%03d", hdgBug / 10);
     lv_label_set_text(_lblHdgBug, buf);
 
     // WP distance (tenths of NM)
@@ -120,7 +120,7 @@ public:
     lv_label_set_text(_lblWpDist, buf);
 
     // WP bearing (tenths → degrees)
-    snprintf(buf, sizeof(buf), "%d", wpBearing / 10);
+    snprintf(buf, sizeof(buf), "%03d", wpBearing / 10);
     lv_label_set_text(_lblWpBrg, buf);
   }
 

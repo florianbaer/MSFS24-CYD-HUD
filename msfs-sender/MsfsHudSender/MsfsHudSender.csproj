@@ -8,18 +8,34 @@
     <AssemblyName>msfs-hud-sender</AssemblyName>
   </PropertyGroup>
 
-  <PropertyGroup Condition="Exists('$(MSFS_SDK)\SimConnect SDK\lib\managed\Microsoft.FlightSimulator.SimConnect.dll')">
+  <!-- SimConnect ships with the MSFS SDK and is not redistributable via NuGet.
+       Without it the project still builds (for the protocol tests) but cannot talk to the sim. -->
+  <PropertyGroup>
+    <SimConnectManagedDll>$(MSFS_SDK)\SimConnect SDK\lib\managed\Microsoft.FlightSimulator.SimConnect.dll</SimConnectManagedDll>
+    <SimConnectNativeDll>$(MSFS_SDK)\SimConnect SDK\lib\SimConnect.dll</SimConnectNativeDll>
+    <HasSimConnect Condition="Exists('$(SimConnectManagedDll)')">true</HasSimConnect>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(HasSimConnect)' == 'true'">
     <DefineConstants>$(DefineConstants);SIMCONNECT</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.IO.Ports" Version="10.0.5" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.12" />
   </ItemGroup>
 
-  <ItemGroup Condition="Exists('$(MSFS_SDK)\SimConnect SDK\lib\managed\Microsoft.FlightSimulator.SimConnect.dll')">
+  <ItemGroup Condition="'$(HasSimConnect)' == 'true'">
     <Reference Include="Microsoft.FlightSimulator.SimConnect">
-      <HintPath>$(MSFS_SDK)\SimConnect SDK\lib\managed\Microsoft.FlightSimulator.SimConnect.dll</HintPath>
+      <HintPath>$(SimConnectManagedDll)</HintPath>
     </Reference>
+    <!-- The managed wrapper loads the native client library from next to the exe -->
+    <None Include="$(SimConnectNativeDll)" Link="SimConnect.dll" CopyToOutputDirectory="PreserveNewest"
+          Condition="Exists('$(SimConnectNativeDll)')" />
   </ItemGroup>
+
+  <Target Name="WarnWithoutSimConnect" BeforeTargets="Build"
+          Condition="'$(HasSimConnect)' != 'true' And $([MSBuild]::IsOSPlatform('Windows'))">
+    <Warning Text="MSFS SDK not found (MSFS_SDK='$(MSFS_SDK)'). Building WITHOUT SimConnect: this sender cannot connect to the simulator." />
+  </Target>
 
 </Project>

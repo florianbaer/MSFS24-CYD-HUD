@@ -1,89 +1,127 @@
 # MSFS 2024 HUD
 
-A flight data HUD for the **ESP32-2432S024C** (Cheap Yellow Display), built with LVGL. Receives binary telemetry over USB serial from Microsoft Flight Simulator 2024 via SimConnect.
+A flight data HUD for the **ESP32-2432S024C** (Cheap Yellow Display), built with LVGL. A small Windows companion app reads telemetry from Microsoft Flight Simulator 2024 via SimConnect and streams it to the display as binary frames over USB serial or WiFi (UDP).
 
-Supports 4 switchable display screens:
-- **MSFS Gyroscope** — Artificial horizon with pitch, roll, and heading
-- **MSFS Engine Gauges** — RPM arc, throttle bar, oil temp/pressure, fuel flow
-- **MSFS Flight Data** — Airspeed, altitude, vertical speed, ground speed
-- **MSFS G-Force Meter** — Vertical/lateral/longitudinal G with peak tracking
+Tap the touchscreen to cycle through the 7 screens.
 
-Tap the touchscreen to cycle through screens.
+## Screens
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/gyro.png" width="270" alt="Gyroscope screen"><br><b>Gyroscope</b><br>Artificial horizon, pitch ladder, heading</td>
+    <td align="center"><img src="docs/images/engine.png" width="270" alt="Engine gauges screen"><br><b>Engine</b><br>RPM, throttle, oil temp/pressure, fuel flow</td>
+    <td align="center"><img src="docs/images/flight-data.png" width="270" alt="Flight data screen"><br><b>Flight Data</b><br>Airspeed, altitude, vertical speed, ground speed</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/g-force.png" width="270" alt="G-force screen"><br><b>G-Force</b><br>Vertical / lateral / longitudinal G, peaks</td>
+    <td align="center"><img src="docs/images/nav.png" width="270" alt="Navigation screen"><br><b>Navigation</b><br>Position, heading bug, next waypoint</td>
+    <td align="center"><img src="docs/images/config.png" width="270" alt="Aircraft configuration screen"><br><b>Config</b><br>Flaps, gear, elevator and rudder trim</td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Master, mode annunciators, targets</td>
+    <td align="center"><img src="docs/images/alert.png" width="270" alt="Stall alert overlay"><br><b>Alerts</b><br>Blinking overlay on every screen, plus the red LED</td>
+    <td></td>
+  </tr>
+</table>
+
+<sub>The screenshots are rendered on a desktop from the real widget code at the panel's 320×240 resolution with sample telemetry (see [Development](#development)); they are not photos of the device.</sub>
+
+Alerts (engine fire, stall, overspeed, gear unsafe) are shown by priority. The display shows `NO DATA` when nothing has arrived for 2 seconds.
 
 ## Hardware
 
-- **Board**: ESP32-2432S024C (2.4" 320x240 ILI9341, capacitive touch CST816S)
-- **Touch**: CST816S on I2C (SDA=33, SCL=32)
-- **Display**: ILI9341 on HSPI
+- **Board**: ESP32-2432S024C (2.4" 320x240 ILI9341, capacitive touch)
+- **Display**: ILI9341 on HSPI, backlight on GPIO 27
+- **Touch**: CST816S on I2C (SDA=33, SCL=32, RST=25, INT=21)
+- **Alert LED**: on-board red LED on GPIO 4
+
+## Quick Start
+
+### 1. Flash the display
+
+See [docs/SETUP.md](docs/SETUP.md) for Arduino IDE and PlatformIO instructions. With PlatformIO it is:
+
+```sh
+pio run -t upload
+```
+
+### 2. Run the sender (Windows, next to MSFS 2024)
+
+The sender needs the SimConnect libraries from the MSFS 2024 SDK, so it is built from source on a machine that has the SDK installed. See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for details.
+
+```sh
+set MSFS_SDK=C:\MSFS 2024 SDK
+cd msfs-sender
+dotnet run --project MsfsHudSender -- COM6               # USB serial, 20 Hz
+dotnet run --project MsfsHudSender -- COM6 --hz 30       # faster updates
+dotnet run --project MsfsHudSender -- 192.168.1.50 --udp # WiFi
+```
+
+The sender waits until MSFS is running and exits when the simulator quits.
 
 ## Protocol
 
-Binary frames over 115200 baud USB serial using COBS framing with CRC8 error checking.
-
-### Wire format
+Binary frames at 115200 baud (or one frame per UDP datagram), COBS-framed with a CRC-8.
 
 ```
 [0x00] [COBS-encoded: msg_type | payload... | CRC8] [0x00]
 ```
 
-### Message types
+All multi-byte fields are little-endian.
 
-| ID | Name | Direction | Payload |
-|----|------|-----------|---------|
-| `0x02` | Attitude | PC -> ESP32 | 6 bytes: pitch, roll, heading (int16 LE, tenths of degrees) |
-| `0x03` | Engine | PC -> ESP32 | 6 bytes: rpm(u16), throttle, fuel_flow, oil_temp, oil_press |
-| `0x04` | FlightData | PC -> ESP32 | 10 bytes: airspeed(u16), altitude(i32), vspeed(i16), gs(u16) |
-| `0x05` | GForce | PC -> ESP32 | 6 bytes: gx, gy, gz (int16 LE, hundredths of G) |
+| ID | Name | Payload |
+|----|------|---------|
+| `0x02` | Attitude | 6 bytes: pitch, roll, heading (i16, tenths of degrees; pitch + = nose up, roll + = left wing down) |
+| `0x03` | Engine | 7 bytes: engine_idx(u8), rpm(u16), throttle %(u8), fuel_flow, oil_temp, oil_press (u8, scaled) |
+| `0x04` | FlightData | 10 bytes: airspeed(u16, tenths kt), altitude(i32, ft), vspeed(i16, fpm), ground_speed(u16, tenths kt) |
+| `0x05` | GForce | 6 bytes: longitudinal, vertical, lateral (i16, hundredths of G) |
+| `0x06` | Alerts | 2 bytes: flags(u16) — bit 0 stall, 1 overspeed, 2 gear unsafe, 3 low fuel, 4 engine fire, 5 A/P disconnect |
+| `0x07` | NavData | 14 bytes: lat, lon (i32, degrees × 1e7), hdg_bug(i16), wp_dist(u16, tenths NM), wp_bearing(i16) |
+| `0x08` | Config | 4 bytes: flaps %(u8), gear_state(u8: 0 up, 1 transit, 2 down), elev_trim, rudder_trim (i8, -100..100) |
+| `0x09` | Autopilot | 8 bytes: mode_flags(u16), target_alt(i32, ft), target_hdg(i16, tenths of degrees) |
 
-The protocol is defined in:
-- **`lib/hud_proto/`** — C headers (used by the ESP32 sketch)
-- **`msfs-sender/msfs_sender/protocol.py`** — Python implementation (used by the sender)
+The protocol is implemented twice and pinned by tests on both sides using the same golden frames:
+
+- **`lib/hud_proto/`** — C++ headers used by the ESP32 sketch
+- **`msfs-sender/MsfsHudSender/Protocol/`** — C# implementation used by the sender
 
 ## Project Structure
 
 ```
-├── lib/
-│   ├── hud_proto/            # C protocol headers
-│   │   ├── frame_decoder.h   # Stream-fed COBS frame decoder
-│   │   ├── messages.h        # Packed C structs
-│   │   ├── cobs.h            # COBS decode
-│   │   └── crc8.h            # CRC8/MAXIM
-│   └── hud_widgets/          # C++ LVGL widget library
-│       ├── GyroHorizon.h     # Artificial horizon (gyroscope)
-│       ├── EngineGauges.h    # RPM, throttle, oil, fuel flow
-│       ├── FlightData.h      # Airspeed, altitude, vspeed
-│       ├── GForceMeter.h     # G-force arcs with peak tracking
-│       └── ColorScale.h      # Threshold-based color mapping
-├── msfs-sender/              # Python MSFS 2024 sender
-│   ├── msfs_sender/
-│   │   ├── __main__.py       # CLI entry point
-│   │   ├── protocol.py       # COBS + CRC8 framing
-│   │   └── simconnect_source.py  # SimConnect wrapper
-│   └── tests/
-│       └── test_protocol.py  # Protocol unit tests
-└── ship_hud/
-    └── ship_hud.ino          # Main ESP32 sketch (4-screen cycling)
+├── config/
+│   ├── lv_conf.h               # LVGL configuration (fonts, heap)
+│   └── User_Setup.h            # TFT_eSPI pinout for the ESP32-2432S024C
+├── lib/                        # Source of truth for the shared headers
+│   ├── hud_proto/              # Frame decoder, COBS, CRC-8, message structs
+│   └── hud_widgets/            # One LVGL widget class per screen + alert overlay
+├── ship_hud/
+│   ├── ship_hud.ino            # ESP32 sketch (7-screen cycling)
+│   ├── *.h                     # Copies of lib/ (the Arduino IDE needs them here)
+│   └── wifi_config.h.example   # Copy to wifi_config.h to enable WiFi/UDP
+├── msfs-sender/                # C# / .NET 10 sender
+│   ├── MsfsHudSender/          # SimConnect source, conversions, protocol, transports
+│   └── MsfsHudSender.Tests/    # xUnit tests
+├── tests/proto/                # Host-side tests for the C++ decoder
+├── tools/
+│   ├── screenshots/            # Renders the screens to docs/images/*.png
+│   └── sync_headers.sh         # Copies lib/ into ship_hud/
+└── platformio.ini
 ```
 
-## Quick Start
-
-### ESP32
-
-See [docs/SETUP.md](docs/SETUP.md) for full Arduino IDE and PlatformIO setup instructions.
-
-### Sender — MSFS 2024 (Python)
-
-See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for full setup and installation instructions.
-
-**Pre-built .exe** — Download `msfs-gyro-sender.exe` from [GitHub Actions](../../actions) and run `msfs-gyro-sender.exe COM6`. No Python needed.
-
-**From source:**
+## Development
 
 ```sh
-cd msfs-sender
-pip install -r requirements.txt
-python -m msfs_sender COM6           # default: 20Hz, 115200 baud
-python -m msfs_sender COM6 --hz 30   # faster updates
+# Sender: protocol and conversion tests (any OS)
+dotnet test msfs-sender/
+
+# Firmware side of the protocol (any OS)
+c++ -std=c++17 -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test && ./decoder_test
+
+# After editing anything in lib/, refresh the copies in the sketch folder
+tools/sync_headers.sh
+
+# Re-render the README screenshots after changing a widget (needs make, a C++ compiler, zlib, git)
+make -C tools/screenshots
 ```
 
 ## License

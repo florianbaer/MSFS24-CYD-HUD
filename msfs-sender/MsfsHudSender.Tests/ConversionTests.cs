@@ -11,25 +11,34 @@ public class ConversionTests
         Assert.Equal(0, p); Assert.Equal(0, r); Assert.Equal(0, h);
     }
 
+    // SimConnect reports PLANE PITCH DEGREES positive nose-DOWN; the wire format is positive nose-UP.
+
     [Fact]
-    public void Attitude_90DegPitch()
+    public void Attitude_NoseUpIsPositive()
     {
-        var (p, _, _) = Conversions.ConvertAttitude(Math.PI / 2, 0, 0);
+        var (p, _, _) = Conversions.ConvertAttitude(-Math.PI / 2, 0, 0);
         Assert.Equal(900, p);
     }
 
     [Fact]
-    public void Attitude_NegativePitch()
+    public void Attitude_NoseDownIsNegative()
     {
-        var (p, _, _) = Conversions.ConvertAttitude(-Math.PI / 4, 0, 0);
+        var (p, _, _) = Conversions.ConvertAttitude(Math.PI / 4, 0, 0);
         Assert.Equal(-450, p);
     }
 
     [Fact]
     public void Attitude_PitchClampedAt180()
     {
-        var (p, _, _) = Conversions.ConvertAttitude(Math.PI * 200 / 180, 0, 0);
+        var (p, _, _) = Conversions.ConvertAttitude(-Math.PI * 200 / 180, 0, 0);
         Assert.Equal(1800, p);
+    }
+
+    [Fact]
+    public void Attitude_RollPassesThrough()
+    {
+        var (_, r, _) = Conversions.ConvertAttitude(0, Math.PI / 6, 0);
+        Assert.Equal(300, r);
     }
 
     [Fact]
@@ -86,6 +95,29 @@ public class ConversionTests
         Assert.Equal((byte)51, ff);
     }
 
+    [Fact]
+    public void Engine_OilTempRankineToFahrenheit()
+    {
+        // 180 °F = 639.67 °R → 180*255/250 = 183
+        var (_, _, _, ot, _) = Conversions.ConvertEngine(0, 0, 0, 639.67, 0);
+        Assert.Equal((byte)183, ot);
+    }
+
+    [Fact]
+    public void Engine_OilTempBelowZeroFahrenheitClamped()
+    {
+        var (_, _, _, ot, _) = Conversions.ConvertEngine(0, 0, 0, 400, 0);
+        Assert.Equal((byte)0, ot);
+    }
+
+    [Fact]
+    public void Engine_OilPressurePsfToPsi()
+    {
+        // 62 PSI = 8928 psf → 62*255/100 = 158
+        var (_, _, _, _, op) = Conversions.ConvertEngine(0, 0, 0, 0, 8928);
+        Assert.Equal((byte)158, op);
+    }
+
     // --- FlightData ---
 
     [Fact]
@@ -122,33 +154,60 @@ public class ConversionTests
     }
 
     // --- GForce ---
+    // Inputs: G FORCE (load factor), ACCELERATION BODY X (lateral), ACCELERATION BODY Z (longitudinal).
 
     [Fact]
-    public void GForce_ZeroInputs()
+    public void GForce_LevelFlightIsOneG()
     {
-        var (gx, gy, gz) = Conversions.ConvertGForce(0, 0, 0);
-        Assert.Equal((short)0, gx); Assert.Equal((short)0, gy); Assert.Equal((short)0, gz);
-    }
-
-    [Fact]
-    public void GForce_1G()
-    {
-        var (_, gy, _) = Conversions.ConvertGForce(0, 32.174, 0);
-        Assert.Equal((short)100, gy);
+        var (gx, gy, gz) = Conversions.ConvertGForce(1.0, 0, 0);
+        Assert.Equal((short)0, gx); Assert.Equal((short)100, gy); Assert.Equal((short)0, gz);
     }
 
     [Fact]
     public void GForce_2G()
     {
-        var (_, gy, _) = Conversions.ConvertGForce(0, 64.348, 0);
+        var (_, gy, _) = Conversions.ConvertGForce(2.0, 0, 0);
         Assert.Equal((short)200, gy);
     }
 
     [Fact]
     public void GForce_NegativeG()
     {
-        var (_, gy, _) = Conversions.ConvertGForce(0, -32.174, 0);
+        var (_, gy, _) = Conversions.ConvertGForce(-1.0, 0, 0);
         Assert.Equal((short)-100, gy);
+    }
+
+    [Fact]
+    public void GForce_BodyZIsLongitudinal()
+    {
+        var (gx, _, gz) = Conversions.ConvertGForce(1.0, 0, 32.174);
+        Assert.Equal((short)100, gx);
+        Assert.Equal((short)0, gz);
+    }
+
+    [Fact]
+    public void GForce_BodyXIsLateral()
+    {
+        var (gx, _, gz) = Conversions.ConvertGForce(1.0, -16.087, 0);
+        Assert.Equal((short)0, gx);
+        Assert.Equal((short)-50, gz);
+    }
+
+    // --- Autopilot targets ---
+
+    [Fact]
+    public void ApTargets_Typical()
+    {
+        var (alt, hdg) = Conversions.ConvertAutopilotTargets(6000, 270);
+        Assert.Equal(6000, alt);
+        Assert.Equal((short)2700, hdg);
+    }
+
+    [Fact]
+    public void ApTargets_Heading360WrapsToZero()
+    {
+        var (_, hdg) = Conversions.ConvertAutopilotTargets(0, 360);
+        Assert.Equal((short)0, hdg);
     }
 
     // --- Alert/AP flags ---

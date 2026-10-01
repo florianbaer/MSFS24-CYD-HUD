@@ -2,8 +2,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/// CRC8/MAXIM (polynomial 0x31, init 0x00).
-/// Must match the Python implementation in msfs-sender/msfs_sender/protocol.py.
+/// CRC-8, polynomial 0x31, init 0x00, MSB first (no reflection, no final XOR).
+/// Must match msfs-sender/MsfsHudSender/Protocol/Crc8.cs.
 static inline uint8_t crc8(const uint8_t* data, size_t len) {
   uint8_t crc = 0x00;
   for (size_t i = 0; i < len; i++) {
