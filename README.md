@@ -9,12 +9,12 @@ Tap the touchscreen to cycle through the 7 screens.
 <table>
   <tr>
     <td align="center"><img src="docs/images/gyro.png" width="270" alt="Gyroscope screen"><br><b>Gyroscope</b><br>Artificial horizon, pitch ladder, heading</td>
-    <td align="center"><img src="docs/images/engine.png" width="270" alt="Engine gauges screen"><br><b>Engine</b><br>RPM, throttle, oil temp/pressure, fuel flow</td>
+    <td align="center"><img src="docs/images/engine.png" width="270" alt="Engine gauges screen"><br><b>Engine</b><br>RPM with caution/limit bands, throttle, oil, fuel flow</td>
     <td align="center"><img src="docs/images/flight-data.png" width="270" alt="Flight data screen"><br><b>Flight Data</b><br>Airspeed, altitude, vertical speed, ground speed</td>
   </tr>
   <tr>
     <td align="center"><img src="docs/images/g-force.png" width="270" alt="G-force screen"><br><b>G-Force</b><br>Vertical / lateral / longitudinal G, peaks</td>
-    <td align="center"><img src="docs/images/nav.png" width="270" alt="Navigation screen"><br><b>Navigation</b><br>Position, heading bug, next waypoint</td>
+    <td align="center"><img src="docs/images/nav.png" width="270" alt="Navigation screen"><br><b>Navigation</b><br>Compass card, heading bug, waypoint bearing pointer</td>
     <td align="center"><img src="docs/images/config.png" width="270" alt="Aircraft configuration screen"><br><b>Config</b><br>Flaps, gear, elevator and rudder trim</td>
   </tr>
   <tr>
@@ -91,6 +91,8 @@ The ESP32 drives a 16-bit (RGB565) SPI panel, so the firmware works to make ever
 - **Anti-aliased attitude indicator.** The horizon ball is rasterised per pixel with sub-pixel coverage on the horizon, the pitch ladder and the bezel — no stair-stepping when the aircraft banks. Bank scale, roll pointer, pitch numbers and the aircraft symbol are drawn with LVGL's anti-aliased primitives on top.
 - **Dithered gradients.** Sky and ground are lit gradients; a 4×4 ordered (Bayer) dither restores the in-between shades RGB565 cannot store, so there is no colour banding.
 - **Smooth motion.** Telemetry arrives at 20–30 Hz; the gyro eases toward each new sample ([`Smoothing.h`](lib/hud_widgets/Smoothing.h)) and redraws at up to ~40 fps, so the horizon glides instead of stepping. Heading takes the short way round through north.
+- **Gliding gauges on every screen.** Arcs and bars ease to each new value ([`Anim.h`](lib/hud_widgets/Anim.h)) instead of jumping, and the nav compass card turns smoothly with the aircraft heading.
+- **More instrument, less text.** The engine RPM arc carries caution and limit bands, the vertical-speed bar has a scale and a zero mark, and the nav screen has a compass card with the heading bug and a bearing pointer to the next waypoint.
 - **DMA double buffering.** LVGL renders into one buffer while the other streams to the panel over DMA, so drawing and the SPI transfer overlap (falls back to a single buffer if DMA memory is short). The serial log prints which mode is active.
 - **Only what changed.** LVGL redraws dirty areas at up to 60 Hz; static screens cost nothing, and the gyro is not redrawn while another screen is shown.
 

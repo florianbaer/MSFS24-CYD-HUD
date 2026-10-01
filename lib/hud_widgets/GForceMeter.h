@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include "Anim.h"
 #include <stdio.h>
 #include "hud_proto.h"
 
@@ -121,7 +122,7 @@ public:
     int16_t gy_clamped = gy;
     if (gy_clamped > 600) gy_clamped = 600;
     if (gy_clamped < -200) gy_clamped = -200;
-    lv_arc_set_value(_arcVertG, gy_clamped);
+    hud::arcTo(_arcVertG, gy_clamped);
 
     // Color: green normal, yellow >2G, red >4G or negative
     lv_color_t vColor;
@@ -139,7 +140,7 @@ public:
     int16_t gz_clamped = gz;
     if (gz_clamped > 200) gz_clamped = 200;
     if (gz_clamped < -200) gz_clamped = -200;
-    lv_bar_set_value(_barLatG, gz_clamped, LV_ANIM_OFF);
+    hud::barTo(_barLatG, gz_clamped);
     formatG(buf, sizeof(buf), gz);
     lv_label_set_text(_lblLatG, buf);
 

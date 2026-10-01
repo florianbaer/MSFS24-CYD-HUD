@@ -98,7 +98,7 @@ The ESP32 display has 7 screens cycled by touch tap:
 | 1 | **MSFS Engine Gauges** | RPM arc, throttle bar, oil temp/pressure, fuel flow |
 | 2 | **MSFS Flight Data** | Airspeed, altitude, vertical speed, ground speed |
 | 3 | **MSFS G-Force Meter** | Vertical/lateral/longitudinal G, peak tracking |
-| 4 | **MSFS Navigation** | Lat/lon, heading bug, waypoint distance/bearing |
+| 4 | **MSFS Navigation** | Compass card with heading bug and waypoint bearing pointer, lat/lon, waypoint distance/bearing |
 | 5 | **MSFS Config** | Flaps, gear status, elevator/rudder trim |
 | 6 | **MSFS Autopilot** | AP master, mode annunciators, target alt/hdg |
 

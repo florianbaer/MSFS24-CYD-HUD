@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include "Anim.h"
 #include <stdio.h>
 #include "hud_proto.h"
 
@@ -33,6 +34,11 @@ public:
     lv_obj_set_style_arc_color(_arcRpm, lv_color_make(0, 200, 0), LV_PART_INDICATOR);
     lv_obj_set_style_arc_width(_arcRpm, 8, LV_PART_MAIN);
     lv_obj_set_style_arc_width(_arcRpm, 8, LV_PART_INDICATOR);
+
+    // Caution (2200-2700) and limit (2700-3000) bands just outside the RPM arc,
+    // matching the colours the indicator switches to
+    addRpmBand(parent, 2200, 2700, lv_color_make(255, 200, 0));
+    addRpmBand(parent, 2700, 3000, lv_color_make(255, 40, 40));
 
     _lblRpm = lv_label_create(parent);
     lv_obj_set_style_text_color(_lblRpm, lv_color_make(0, 220, 0), 0);
@@ -132,7 +138,7 @@ public:
     _prevRpm = rpm; _prevThrottle = throttle; _prevFuelFlow = fuel_flow;
     _prevOilTemp = oil_temp; _prevOilPress = oil_press;
 
-    lv_arc_set_value(_arcRpm, rpm > 3000 ? 3000 : rpm);
+    hud::arcTo(_arcRpm, rpm > 3000 ? 3000 : rpm);
     // Color RPM arc: green < 2200, yellow 2200-2700, red > 2700
     lv_color_t rpmColor;
     if (rpm > 2700)      rpmColor = lv_color_make(255, 40, 40);
@@ -144,12 +150,12 @@ public:
     snprintf(buf, sizeof(buf), "%u", (unsigned)rpm);
     lv_label_set_text(_lblRpm, buf);
 
-    lv_bar_set_value(_barThrottle, throttle > 100 ? 100 : throttle, LV_ANIM_OFF);
+    hud::barTo(_barThrottle, throttle > 100 ? 100 : throttle);
     snprintf(buf, sizeof(buf), "%u%%", (unsigned)throttle);
     lv_label_set_text(_lblThrottle, buf);
 
-    lv_arc_set_value(_arcOilTemp, oil_temp);
-    lv_arc_set_value(_arcOilPress, oil_press);
+    hud::arcTo(_arcOilTemp, oil_temp);
+    hud::arcTo(_arcOilPress, oil_press);
 
     // Wire value 0..255 spans 0..50 GPH (see EngineMsg)
     unsigned ffTenths = (unsigned)fuel_flow * 500 / 255;
@@ -158,6 +164,21 @@ public:
   }
 
 private:
+  /// Thin coloured arc around the RPM gauge covering [from, to] of 0..3000.
+  static void addRpmBand(lv_obj_t* parent, int from, int to, lv_color_t color) {
+    // The RPM arc spans 270° starting at 135° (0 RPM, lower left)
+    lv_obj_t* band = lv_arc_create(parent);
+    lv_obj_set_size(band, 128, 128);  // concentric with the 120 px RPM arc
+    lv_obj_set_pos(band, 6, 16);
+    lv_arc_set_bg_angles(band, (135 + from * 270 / 3000) % 360, (135 + to * 270 / 3000) % 360);
+    lv_obj_remove_style(band, NULL, LV_PART_KNOB);
+    lv_obj_remove_style(band, NULL, LV_PART_INDICATOR);
+    lv_obj_remove_flag(band, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_color(band, color, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(band, 3, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(band, false, LV_PART_MAIN);
+  }
+
   lv_obj_t* _parent = nullptr;
   uint16_t _prevRpm = UINT16_MAX;
   uint8_t _prevThrottle = 0xFF, _prevFuelFlow = 0xFF;

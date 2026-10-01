@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include "Anim.h"
 #include <stdio.h>
 #include "hud_proto.h"
 
@@ -114,7 +115,7 @@ public:
     char buf[16];
 
     // Flaps
-    lv_bar_set_value(_barFlaps, flapsPct, LV_ANIM_OFF);
+    hud::barTo(_barFlaps, flapsPct);
     lv_color_t flapColor = flapsPct > 75 ? lv_color_make(255, 200, 0) :
                            flapsPct > 0  ? lv_color_make(0, 200, 0) :
                                            lv_color_make(100, 100, 100);
@@ -140,12 +141,12 @@ public:
     }
 
     // Elevator trim
-    lv_bar_set_value(_barElevTrim, elevTrim, LV_ANIM_OFF);
+    hud::barTo(_barElevTrim, elevTrim);
     snprintf(buf, sizeof(buf), "%d", (int)elevTrim);
     lv_label_set_text(_lblElevTrim, buf);
 
     // Rudder trim
-    lv_bar_set_value(_barRudderTrim, rudderTrim, LV_ANIM_OFF);
+    hud::barTo(_barRudderTrim, rudderTrim);
     snprintf(buf, sizeof(buf), "%d", (int)rudderTrim);
     lv_label_set_text(_lblRudderTrim, buf);
   }

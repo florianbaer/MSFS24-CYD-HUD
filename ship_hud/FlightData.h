@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include "Anim.h"
 #include <stdio.h>
 #include "hud_proto.h"
 
@@ -82,12 +83,29 @@ public:
     lv_label_set_text(_lblVspeed, "0");
     lv_obj_set_pos(_lblVspeed, 128, 175);
 
-    // Zero reference line on vspeed bar
-    lv_obj_t* zeroLine = lv_label_create(parent);
-    lv_obj_set_style_text_color(zeroLine, lv_color_make(180, 180, 180), 0);
-    lv_obj_set_style_text_font(zeroLine, &lv_font_montserrat_10, 0);
-    lv_label_set_text(zeroLine, "--");
-    lv_obj_set_pos(zeroLine, 170, 97);
+    // Scale beside the vspeed bar: ticks every 1000 fpm, a long white zero mark
+    static const int VS_TICKS[] = {-3000, -2000, -1000, 0, 1000, 2000, 3000};
+    for (int i = 0; i < 7; i++) {
+      bool zero = VS_TICKS[i] == 0;
+      lv_obj_t* tick = lv_obj_create(parent);
+      lv_obj_remove_style_all(tick);
+      lv_obj_set_size(tick, zero ? 26 : 5, zero ? 2 : 1);
+      // bar spans y 32..171 for -3000..+3000
+      int y = 32 + (3000 - VS_TICKS[i]) * 139 / 6000;
+      lv_obj_set_pos(tick, zero ? 147 : 170, y);
+      lv_obj_set_style_bg_opa(tick, LV_OPA_COVER, 0);
+      lv_obj_set_style_bg_color(tick, zero ? lv_color_white() : lv_color_make(120, 120, 120), 0);
+      if (zero) lv_obj_move_foreground(tick);
+    }
+    static const char* const VS_NUM[] = {"2", "1", "1", "2"};
+    static const int VS_NUM_AT[] = {2000, 1000, -1000, -2000};
+    for (int i = 0; i < 4; i++) {
+      lv_obj_t* n = lv_label_create(parent);
+      lv_obj_set_style_text_color(n, lv_color_make(120, 120, 120), 0);
+      lv_obj_set_style_text_font(n, &lv_font_montserrat_10, 0);
+      lv_label_set_text(n, VS_NUM[i]);
+      lv_obj_set_pos(n, 178, 32 + (3000 - VS_NUM_AT[i]) * 139 / 6000 - 6);
+    }
 
     // ---- Ground speed (bottom center) ----
     lv_obj_t* gsTitle = lv_label_create(parent);
@@ -130,7 +148,7 @@ public:
     int16_t vs_clamped = vspeed;
     if (vs_clamped > 3000) vs_clamped = 3000;
     if (vs_clamped < -3000) vs_clamped = -3000;
-    lv_bar_set_value(_barVspeed, vs_clamped, LV_ANIM_OFF);
+    hud::barTo(_barVspeed, vs_clamped);
 
     // Color: green for climb, red for descent
     lv_color_t vsColor = vspeed >= 0

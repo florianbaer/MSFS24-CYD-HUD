@@ -154,6 +154,7 @@ int main(int argc, char** argv) {
   // Sample telemetry: a light single in a climbing left turn out of Zurich.
   // Values are in wire units, exactly as the sender would deliver them.
   gyro.setValue(65, 180, 2740);                    // pitch +6.5, roll 18 left, HDG 274
+  nav.setHeading(2740);                            // the sketch forwards attitude heading too
   engine.setValue(2380, 88, 47, 187, 158);         // 9.2 GPH, 183 F, 62 PSI
   flightData.setValue(1124, 4520, 650, 1187);      // 112.4 KIAS, 4520 ft, +650 fpm
   gforce.setValue(3, 62, 4);                       // earlier push-over ...

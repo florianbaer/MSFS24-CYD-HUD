@@ -159,6 +159,7 @@ void handleAttitude(const uint8_t* payload, int len) {
   AttitudeMsg msg;
   memcpy(&msg, payload, sizeof(AttitudeMsg));
   gyro.setValue(msg.pitch, msg.roll, msg.heading);
+  nav.setHeading(msg.heading);
 }
 
 void handleEngine(const uint8_t* payload, int len) {
@@ -284,6 +285,9 @@ void setup() {
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, my_touchpad_read);
 
+  // Gauges glide between telemetry samples (see Anim.h)
+  hud::animate = true;
+
   // Screens: keep in sync with tools/screenshots/main.cpp
   for (int i = 0; i < NUM_SCREENS; i++) screens[i] = newScreen();
 
@@ -371,8 +375,9 @@ void loop() {
   }
 #endif
 
-  // Animations: horizon easing and alert heartbeat
+  // Animations: horizon and compass easing, alert heartbeat
   gyro.tick(millis());
+  nav.tick(millis());
   alert.tick(millis());
 
   // "NO DATA" indicator
