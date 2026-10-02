@@ -11,7 +11,9 @@
     3. flashes the firmware (the ready-made image Setup.exe ships, or one it
        builds with a private Arduino toolchain when run from the sources) and
        sends the WiFi settings to the display over USB
-    4. installs the .NET SDK if needed, finds the MSFS SDK and builds the sender
+    4. installs the sender: the ready-built one Setup.exe ships, or one it
+       builds from source (installing the .NET SDK if needed). Neither needs
+       the MSFS SDK: the sender has its own SimConnect client
     5. runs a short display test with synthetic flight data
     6. registers the sender in MSFS's exe.xml so it starts with the simulator,
        and adds Start-menu shortcuts and an "Apps & features" entry
@@ -40,7 +42,7 @@ param(
   [switch]$Uninstall,
   # Accept the default answer to every question.
   [switch]$Yes,
-  # Only (re)build and install the sender.
+  # Only (re)install the sender.
   [switch]$SkipFirmware,
   # Only (re)flash the display.
   [switch]$SkipSender,
@@ -50,8 +52,6 @@ param(
   [ValidateSet('Usb', 'Wifi')]
   [string]$Connection,
   [string]$WifiSsid,
-  # Folder of the MSFS 2024 SDK (the one that contains "SimConnect SDK").
-  [string]$MsfsSdk,
   # Do not register the sender in MSFS's exe.xml.
   [switch]$NoAutoStart
 )
@@ -548,66 +548,35 @@ function Get-Dotnet {
   return $exe
 }
 
-function Test-MsfsSdk([string]$Path) {
-  if (-not $Path) { return $false }
-  return Test-Path (Join-Path $Path 'SimConnect SDK\lib\managed\Microsoft.FlightSimulator.SimConnect.dll')
+# Setup.exe ships the sender ready-built; a source checkout builds it.
+function Get-BundledSender {
+  $exe = Join-Path $RepoRoot "sender\$SenderExe"
+  if (Test-Path $exe) { return $exe }
+  return $null
 }
 
-function Find-MsfsSdk([string]$Preferred) {
-  $candidates = @($Preferred, $env:MSFS2024_SDK, $env:MSFS_SDK)
-  foreach ($drive in (Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
-    foreach ($name in @('MSFS 2024 SDK', 'MSFS SDK', 'MSFS2024 SDK')) {
-      $candidates += Join-Path $drive.Root $name
-      $candidates += Join-Path $drive.Root "Program Files\$name"
-    }
-  }
-  foreach ($c in $candidates) {
-    if (Test-MsfsSdk $c) { Write-Ok "MSFS SDK found: $c"; return $c }
-  }
-
-  Write-Warn 'The MSFS 2024 SDK was not found. The sender needs its SimConnect library.'
-  Write-Info 'Install it once from inside the simulator:'
-  Write-Info '  MSFS 2024 > Options > General > Developers > Developer Mode ON,'
-  Write-Info '  then in the developer menu bar: Help > SDK Installer (Core).'
-  Write-Info 'The default install folder is C:\MSFS 2024 SDK.'
-  if ($Yes) { return $null }
-  while ($true) {
-    $i = Read-Choice 'How do you want to continue?' @('Browse for the SDK folder', 'Type the path', 'I just installed it - search again', 'Skip the sender for now') 0
-    switch ($i) {
-      0 {
-        Add-Type -AssemblyName System.Windows.Forms
-        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dlg.Description = 'Select the MSFS 2024 SDK folder (it contains "SimConnect SDK")'
-        if ($dlg.ShowDialog() -eq 'OK' -and (Test-MsfsSdk $dlg.SelectedPath)) { return $dlg.SelectedPath }
-        Write-Warn 'That folder does not contain "SimConnect SDK".'
-      }
-      1 {
-        $p = Read-Value 'SDK folder'
-        if (Test-MsfsSdk $p) { return $p }
-        Write-Warn 'That folder does not contain "SimConnect SDK".'
-      }
-      2 { return Find-MsfsSdk $null }
-      3 { return $null }
-    }
-  }
-}
-
-function Install-Sender([string]$Sdk) {
-  $dotnet = Get-Dotnet
+# The sender has its own SimConnect client: neither the MSFS SDK nor
+# Microsoft's DLLs are needed, only .NET to build it from source.
+function Install-Sender {
   Stop-Sender
-  $project = Join-Path $RepoRoot 'msfs-sender\MsfsHudSender\MsfsHudSender.csproj'
-  $publish = Join-Path $BuildDir 'sender'
-  if (Test-Path $publish) { Remove-Item $publish -Recurse -Force }
-  $publishArgs = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained',
-                   '-p:PublishSingleFile=true', '-o', $publish, '--nologo')
-  $buildEnv = @{ MSFS_SDK = $Sdk; DOTNET_CLI_TELEMETRY_OPTOUT = '1'; DOTNET_NOLOGO = '1' }
-  if (-not (Invoke-Tool $dotnet $publishArgs 'Building the sender' $buildEnv)) { Stop-Installer 'Building the sender failed.' }
-  if (-not (Test-Path (Join-Path $publish 'SimConnect.dll'))) {
-    Stop-Installer 'The sender was built without SimConnect.dll - the SDK folder looks incomplete.'
+  $bundled = Get-BundledSender
+  if ($bundled) {
+    $source = Split-Path $bundled
+    Write-Ok 'Using the ready-built sender'
+  } else {
+    $dotnet = Get-Dotnet
+    $project = Join-Path $RepoRoot 'msfs-sender\MsfsHudSender\MsfsHudSender.csproj'
+    $source = Join-Path $BuildDir 'sender'
+    if (Test-Path $source) { Remove-Item $source -Recurse -Force }
+    $publishArgs = @('publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained',
+                     '-p:PublishSingleFile=true', '-o', $source, '--nologo')
+    $buildEnv = @{ DOTNET_CLI_TELEMETRY_OPTOUT = '1'; DOTNET_NOLOGO = '1' }
+    if (-not (Invoke-Tool $dotnet $publishArgs 'Building the sender' $buildEnv)) { Stop-Installer 'Building the sender failed.' }
   }
 
+  # Always run from the same place, so exe.xml and the shortcuts survive updates
   New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
-  Copy-Item (Join-Path $publish '*') $AppDir -Recurse -Force
+  Copy-Item (Join-Path $source '*') $AppDir -Recurse -Force
   Write-Ok "Sender installed to $AppDir"
   return (Join-Path $AppDir $SenderExe)
 }
@@ -802,7 +771,7 @@ if (-not (Test-Path (Join-Path $RepoRoot 'ship_hud\ship_hud.ino'))) {
 $prev = Get-Settings
 Write-Host '  This sets up the display and the MSFS companion app.'
 if (Get-BundledFirmware) {
-  Write-Host '  It takes a few minutes; the first run downloads the .NET SDK if it is missing.'
+  Write-Host '  It takes about a minute.'
 } else {
   Write-Host '  It takes 5-15 minutes, most of it downloading the ESP32 toolchain on the first run.'
 }
@@ -892,22 +861,15 @@ if ($Connection -eq 'Wifi') {
 }
 
 # ---- 4. Sender ---------------------------------------------------------------
-Write-Step 'Build and install the MSFS sender'
+Write-Step 'Install the MSFS sender'
 $exe = Join-Path $AppDir $SenderExe
-$sdk = Get-Setting $prev 'MsfsSdk'
 if ($SkipSender) {
   Write-Info 'Skipped (-SkipSender)'
 } else {
-  if (-not $MsfsSdk) { $MsfsSdk = $sdk }
-  $sdk = Find-MsfsSdk $MsfsSdk
-  if ($sdk) {
-    $exe = Install-Sender $sdk
-  } else {
-    Write-Warn 'Sender skipped. Re-run the installer once the MSFS SDK is installed.'
-  }
+  $exe = Install-Sender
 }
 
-Save-Settings @{ Port = $comPort; Connection = $Connection; WifiSsid = $WifiSsid; DisplayIp = $displayIp; MsfsSdk = $sdk }
+Save-Settings @{ Port = $comPort; Connection = $Connection; WifiSsid = $WifiSsid; DisplayIp = $displayIp }
 
 # ---- 5. Test -------------------------------------------------------------------
 Write-Step 'Test the display'

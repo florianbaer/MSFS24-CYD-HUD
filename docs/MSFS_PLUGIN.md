@@ -1,28 +1,27 @@
 # MSFS 2024 Flight Data Sender
 
-A companion app that reads flight data from Microsoft Flight Simulator 2024 via the native SimConnect C# API and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 7 HUD screens.
+A companion app that reads flight data from Microsoft Flight Simulator 2020/2024 over SimConnect and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 7 HUD screens.
 
-> **Using the Windows installer?** `MsfsCydHud-Setup.exe` (or `Install.cmd` in a clone) builds the sender, installs it to `%LOCALAPPDATA%\MsfsCydHud\app`, registers it in `exe.xml` and adds Start-menu shortcuts. This page covers doing it by hand.
+> **Using the Windows installer?** `MsfsCydHud-Setup.exe` ships the sender ready-built, installs it to `%LOCALAPPDATA%\MsfsCydHud\app`, registers it in `exe.xml` and adds Start-menu shortcuts. This page covers doing it by hand.
 
 ## Requirements
 
-- **Windows 10/11** with MSFS 2024
-- **.NET 10 SDK**
-- **MSFS 2024 SDK** — it provides the SimConnect libraries. They cannot be downloaded separately, which is why there is no pre-built download: an exe built without the SDK (for example by this repository's CI) starts, but can only report that SimConnect is missing.
+- **Windows 10/11** with MSFS 2024 (or 2020)
+- Nothing else for the ready-built `msfs-hud-sender.exe` (from Setup.exe or the CI artifacts)
+- **.NET 10 SDK** only to build it yourself
+
+The MSFS SDK is **not** needed: the sender has its own SimConnect client instead of Microsoft's DLLs. It talks to the simulator over the named pipe `\\.\pipe\Microsoft Flight Simulator\SimConnect` that MSFS opens for local clients (falling back to the TCP port MSFS registers), or over TCP to another PC with `--simconnect`.
 
 ## Building
 
 ```sh
-:: Point MSFS_SDK at your SDK installation (the folder that contains "SimConnect SDK")
-set MSFS_SDK=C:\MSFS 2024 SDK
-
 cd msfs-sender
-dotnet publish MsfsHudSender/MsfsHudSender.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o publish
+dotnet publish MsfsHudSender/MsfsHudSender.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-This produces `publish/msfs-hud-sender.exe` with `SimConnect.dll` next to it; keep the two files together. If the build prints *"MSFS SDK not found"*, `MSFS_SDK` does not point at the SDK.
+This produces a single `publish/msfs-hud-sender.exe`. For development, `dotnet run --project MsfsHudSender -- COM6` works as well (the protocol and SimConnect tests run on any OS: `dotnet test`).
 
-For development, `dotnet run --project MsfsHudSender -- COM6` works as well.
+**Fallback to Microsoft's client:** with the MSFS SDK installed, `set MSFS_SDK=C:\MSFS 2024 SDK` and add `-p:UseSdkSimConnect=true` to build both clients; `--sdk-simconnect` then selects Microsoft's. Keep `SimConnect.dll` next to the exe in that case.
 
 ## Running
 
@@ -56,7 +55,9 @@ msfs-hud-sender.exe 192.168.1.50 --udp --port 4242
 | `--baud` | 115200 | Serial baud rate |
 | `--hz` | 20 | Send rate in Hz (1-60) |
 | `--udp` | — | Use UDP transport instead of serial; the target is the display's IP address or host name |
-| `--demo` | — | Send a synthetic flight instead of MSFS data (does not need MSFS or the SDK) |
+| `--demo` | — | Send a synthetic flight instead of MSFS data (does not need MSFS) |
+| `--simconnect` | — | `host:port` of MSFS on another PC (SimConnect over TCP, enabled in that PC's `SimConnect.xml`) |
+| `--sdk-simconnect` | — | Use Microsoft's SimConnect client instead of the built-in one (only in builds with `-p:UseSdkSimConnect=true`) |
 | `--port` | 4242 | UDP port (with --udp) |
 
 ## Auto-start with MSFS
@@ -108,7 +109,7 @@ Alert warnings (stall, overspeed, gear unsafe, engine fire) overlay on all scree
 
 ## How It Works
 
-1. The sender connects to MSFS via the managed SimConnect API
+1. The sender connects to MSFS with its built-in SimConnect client (named pipe, or TCP with `--simconnect`)
 2. Each loop reads all flight data (attitude, engine, flight, G-force, alerts, nav, config, autopilot) and converts it to the wire units — e.g. SimConnect reports pitch positive nose-down, the wire format is positive nose-up; vertical G is the load factor (1.0 in level flight); heading is magnetic
 3. Values are packed into binary protocol messages and framed with COBS encoding + CRC8 checksum
 4. All frames are sent over USB serial (or WiFi UDP) to the ESP32 at the configured Hz rate
@@ -136,11 +137,8 @@ All multi-byte fields are little-endian.
 **"Waiting for MSFS 2024..." never goes away**
 -> MSFS is not running, or SimConnect is not reachable. The sender keeps retrying every 2 seconds.
 
-**"This build was compiled without the MSFS SDK"**
--> The exe was built without `MSFS_SDK` set. Rebuild as described under [Building](#building).
-
-**"Unable to load DLL 'SimConnect.dll'"**
--> `SimConnect.dll` must be in the same folder as `msfs-hud-sender.exe`.
+**"SimConnect rejected request ..."**
+-> The simulator did not accept a simulation variable (for example on an aircraft without that system). The other values keep flowing; please open an issue with the line.
 
 **"Waiting for the display to be plugged in"** (with `auto`)
 -> No CH340/CH9102/CP210x device is connected, or its driver is missing (Device Manager shows it with a warning sign). Pass the port name explicitly if your board uses a different USB chip.

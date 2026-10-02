@@ -90,14 +90,13 @@ try {
   }
   Check (Test-MissingDriver) 'a CH340 without driver is detected'
 
-  # ---- MSFS SDK detection ------------------------------------------------------
-  $sdk = Join-Path $work 'MSFS 2024 SDK'
-  $managed = Join-Path $sdk 'SimConnect SDK\lib\managed'
-  New-Item -ItemType Directory -Force -Path $managed | Out-Null
-  New-Item -ItemType File -Force -Path (Join-Path $managed 'Microsoft.FlightSimulator.SimConnect.dll') | Out-Null
-  Check (Test-MsfsSdk $sdk) 'an SDK folder is recognised'
-  Check (-not (Test-MsfsSdk $work)) 'another folder is rejected'
-  Check (-not (Test-MsfsSdk '')) 'an empty path is rejected'
+  # ---- ready-built sender -------------------------------------------------------
+  $SenderExe = 'msfs-hud-sender.exe'
+  $RepoRoot = Join-Path $work 'bundle'
+  Check ($null -eq (Get-BundledSender)) 'a source checkout has no ready-built sender'
+  New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot 'sender') | Out-Null
+  Set-Content (Join-Path $RepoRoot 'sender\msfs-hud-sender.exe') 'x'
+  Check ((Get-BundledSender) -like '*sender*msfs-hud-sender.exe') 'the sender bundled by Setup.exe is found'
 
   # ---- exe.xml -----------------------------------------------------------------
   $exeXml = Join-Path $work 'exe.xml'

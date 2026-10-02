@@ -50,7 +50,7 @@ Setup installs per user, without admin rights, and then runs the guided setup:
 1. **Finds the display** on USB by its USB chip (CH340 / CH9102 / CP210x) and points you to the driver if Windows has none.
 2. **USB or WiFi**: for WiFi it asks for the network and password.
 3. **Flashes the firmware** that comes ready-made in Setup.exe (with esptool, ~30 s; skipped when the display already runs this version) and sends the WiFi settings to the display over USB. The display keeps them in its flash, so switching between USB and WiFi never needs a re-flash. For WiFi it waits for the display to join and reads its IP address.
-4. **Builds the sender**: installs the .NET 10 SDK for your user if it is missing and finds the MSFS 2024 SDK (or explains how to install it from the simulator's developer menu). The sender is built on your PC because SimConnect comes with the MSFS SDK.
+4. **Installs the sender**, which comes ready-built in Setup.exe. No MSFS SDK, no .NET SDK: the sender has its own SimConnect client (see [below](#no-msfs-sdk-needed)).
 5. **Tests the display** with a 15-second synthetic flight.
 6. **Starts the HUD with MSFS** via `exe.xml` (Steam and Microsoft Store, with a backup of the file) and adds Start-menu shortcuts.
 
@@ -72,10 +72,9 @@ pio run -t upload
 
 #### 2. Run the sender (Windows, next to MSFS 2024)
 
-The sender needs the SimConnect libraries from the MSFS 2024 SDK, so it is built from source on a machine that has the SDK installed. See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for details.
+Use `msfs-hud-sender.exe` from Setup.exe or the CI artifacts, or run it from source with the .NET 10 SDK (no MSFS SDK needed). See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for details.
 
 ```sh
-set MSFS_SDK=C:\MSFS 2024 SDK
 cd msfs-sender
 dotnet run --project MsfsHudSender                      # USB, finds the display by itself
 dotnet run --project MsfsHudSender -- COM6               # USB serial on a fixed port, 20 Hz
@@ -85,6 +84,12 @@ dotnet run --project MsfsHudSender -- --demo             # display test without 
 ```
 
 The sender waits until MSFS is running and exits when the simulator quits.
+
+## No MSFS SDK needed
+
+Most SimConnect apps use Microsoft's SimConnect DLLs, which come with the MSFS SDK and whose licence does not clearly allow shipping them. The sender instead speaks the SimConnect protocol itself ([`msfs-sender/MsfsHudSender/SimConnect/`](msfs-sender/MsfsHudSender/SimConnect)): it opens the same named pipe MSFS 2020 and 2024 offer every local client, and uses only the few calls it needs (open, data definitions, data requests). That is what lets CI build a finished exe and Setup.exe ship it.
+
+The packets are pinned by tests to the bytes of [node-simconnect](https://github.com/EvenAR/node-simconnect), an independent open-source client used with MSFS 2020 and 2024, and the whole sender is tested end to end against a fake simulator over both the named pipe and TCP. If a future MSFS update ever broke it, a build with `-p:UseSdkSimConnect=true` (MSFS SDK required) adds Microsoft's client back, selectable with `--sdk-simconnect`.
 
 ## Display quality
 
@@ -140,7 +145,7 @@ The protocol is implemented twice and pinned by tests on both sides using the sa
 │   ├── *.h                     # Copies of lib/ (the Arduino IDE needs them here)
 │   └── wifi_config.h.example   # Optional build-time WiFi default (normally set over USB)
 ├── msfs-sender/                # C# / .NET 10 sender
-│   ├── MsfsHudSender/          # SimConnect source, conversions, protocol, transports
+│   ├── MsfsHudSender/          # Built-in SimConnect client, conversions, protocol, transports
 │   └── MsfsHudSender.Tests/    # xUnit tests
 ├── installer/                  # Guided setup (install.ps1), Setup.exe script (Inno Setup), web bootstrap
 ├── Install.cmd                 # Double-click entry point for the installer

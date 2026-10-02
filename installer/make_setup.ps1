@@ -3,12 +3,14 @@
   Stages the files for MsfsCydHud-Setup.exe and compiles it with Inno Setup.
 
 .EXAMPLE
-  powershell -File installer\make_setup.ps1 -Firmware build\ship_hud.ino.merged.bin
+  powershell -File installer\make_setup.ps1 -Firmware build\ship_hud.ino.merged.bin -Sender build\sender
 #>
 [CmdletBinding()]
 param(
   # Merged flash image built from ship_hud (arduino-cli --build-path ... ship_hud.ino.merged.bin)
   [Parameter(Mandatory = $true)][string]$Firmware,
+  # Folder with the published sender (dotnet publish ... -o <folder>)
+  [Parameter(Mandatory = $true)][string]$Sender,
   # Where Setup.exe is written
   [string]$OutDir = 'build',
   # Inno Setup compiler; installed with Chocolatey if missing
@@ -29,18 +31,14 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 # What the guided setup needs: itself, the sketch (version, fallback build),
-# the display configuration, the sender sources and the ready-made firmware
+# the display configuration, the ready-built sender and the ready-made firmware
 Copy-Item (Join-Path $root 'installer') (Join-Path $stage 'installer') -Recurse
 Remove-Item (Join-Path $stage 'installer\make_setup.ps1'), (Join-Path $stage 'installer\MsfsCydHud.iss') -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root 'ship_hud') (Join-Path $stage 'ship_hud') -Recurse
 Remove-Item (Join-Path $stage 'ship_hud\wifi_config.h') -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root 'config') (Join-Path $stage 'config') -Recurse
-New-Item -ItemType Directory -Force -Path (Join-Path $stage 'msfs-sender') | Out-Null
-Copy-Item (Join-Path $root 'msfs-sender\MsfsHudSender') (Join-Path $stage 'msfs-sender\MsfsHudSender') -Recurse
-foreach ($d in 'bin', 'obj') {
-  $p = Join-Path $stage "msfs-sender\MsfsHudSender\$d"
-  if (Test-Path $p) { Remove-Item $p -Recurse -Force }
-}
+New-Item -ItemType Directory -Force -Path (Join-Path $stage 'sender') | Out-Null
+Copy-Item (Join-Path $Sender 'msfs-hud-sender.exe') (Join-Path $stage 'sender')
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'firmware') | Out-Null
 Copy-Item $Firmware (Join-Path $stage 'firmware\msfs-cyd-hud.bin')
 foreach ($f in 'README.md', 'LICENSE') { Copy-Item (Join-Path $root $f) $stage }

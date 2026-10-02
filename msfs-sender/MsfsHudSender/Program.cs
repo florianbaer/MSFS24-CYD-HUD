@@ -1,11 +1,14 @@
 using System.IO.Ports;
-using System.Runtime.InteropServices;
 using MsfsHudSender;
 using MsfsHudSender.Protocol;
+using MsfsHudSender.SimConnect;
 
 // Parse CLI args
 bool udpMode = false;
 bool demo = false;
+bool sdkSimConnect = false;
+string? simHost = null;
+int simPort = 0;
 string target = "";
 int baud = 115200;
 int hz = 20;
@@ -27,6 +30,18 @@ for (int i = 0; i < args.Length; i++)
     {
         case "--udp": udpMode = true; break;
         case "--demo": demo = true; break;
+        case "--sdk-simconnect": sdkSimConnect = true; break;
+        case "--simconnect" when i + 1 < args.Length:
+        {
+            var parts = args[++i].Split(':');
+            if (parts.Length != 2 || !int.TryParse(parts[1], out simPort) || simPort is < 1 or > 65535)
+            {
+                Console.Error.WriteLine($"Error: --simconnect needs host:port, got '{args[i]}'");
+                return 1;
+            }
+            simHost = parts[0];
+            break;
+        }
         case "--baud" when i + 1 < args.Length:
             baud = ParseOption("baud rate", args[++i], 9600, 921600);
             break;
@@ -44,6 +59,7 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine("  --baud <rate>  Serial baud rate (default: 115200)");
             Console.WriteLine("  --hz <rate>    Send rate in Hz (default: 20)");
             Console.WriteLine("  --port <port>  UDP port (default: 4242)");
+            Console.WriteLine("  --simconnect <host:port>  MSFS on another PC (SimConnect over TCP, see SimConnect.xml)");
             return 0;
         default:
             if (args[i].StartsWith('-'))
@@ -68,12 +84,13 @@ if (string.IsNullOrEmpty(target))
     target = "auto";
 }
 
-if (!demo && !MsfsSource.IsSupported)
+#if !SIMCONNECT
+if (sdkSimConnect)
 {
-    Console.Error.WriteLine("This build was compiled without the MSFS SDK and cannot talk to the simulator.");
-    Console.Error.WriteLine("Rebuild on Windows with the MSFS_SDK environment variable set (see docs/MSFS_PLUGIN.md).");
+    Console.Error.WriteLine("Error: --sdk-simconnect needs a build with the MSFS SDK (-p:UseSdkSimConnect=true).");
     return 1;
 }
+#endif
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
@@ -160,7 +177,11 @@ if (demo)
 
 // Connect to MSFS. The sender may be launched before the sim is ready
 // (e.g. from exe.xml), so keep trying until it answers.
-var source = new MsfsSource();
+#if SIMCONNECT
+IFlightSource source = sdkSimConnect ? new SdkMsfsSource() : new MsfsSource(simHost, simPort);
+#else
+IFlightSource source = new MsfsSource(simHost, simPort);
+#endif
 bool announcedWaiting = false;
 while (!cts.IsCancellationRequested)
 {
@@ -169,7 +190,7 @@ while (!cts.IsCancellationRequested)
         source.Connect();
         break;
     }
-    catch (COMException)
+    catch (SimConnectUnavailableException)
     {
         if (!announcedWaiting)
         {

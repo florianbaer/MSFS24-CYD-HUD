@@ -89,12 +89,10 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet test msfs-sender/ --verbosity normal
 
-  # Compile check only. SimConnect ships with the MSFS SDK, which is not available
-  # on the runner, so an exe built here cannot connect to the simulator and is
-  # deliberately not published as an artifact. Build a usable exe on a machine
-  # with the SDK installed (see docs/MSFS_PLUGIN.md).
+  # The sender has its own SimConnect client, so the exe built here is the real
+  # thing: no MSFS SDK involved. Setup.exe ships it.
   msfs-sender-build:
-    name: Build sender (Windows, without SimConnect)
+    name: Sender exe & installer tests (Windows)
     runs-on: windows-latest
     needs: msfs-sender-test
     steps:
@@ -114,12 +112,25 @@ jobs:
       - name: Installer logic tests
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/installer/installer_test.ps1
+      # Includes the test over the real MSFS named pipe, which only runs on Windows
+      - name: Sender tests on Windows
+        run: dotnet test msfs-sender/ --verbosity normal
       - name: Publish single-file exe
         run: >
           dotnet publish msfs-sender/MsfsHudSender/MsfsHudSender.csproj
           -c Release -r win-x64 --self-contained
-          -p:PublishSingleFile=true
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none
           -o publish
+      - name: The exe starts
+        shell: powershell
+        run: |
+          & publish\msfs-hud-sender.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "msfs-hud-sender.exe --help exited with $LASTEXITCODE" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sender
+          path: publish/msfs-hud-sender.exe
+          if-no-files-found: error
 
   # MsfsCydHud-Setup.exe: the firmware image, esptool, the guided setup and the
   # sender sources in one per-user Windows installer. Downloadable from the run's
@@ -127,7 +138,7 @@ jobs:
   setup:
     name: Windows installer (Setup.exe)
     runs-on: windows-latest
-    needs: firmware
+    needs: [firmware, msfs-sender-build]
     permissions:
       contents: write
     steps:
@@ -136,9 +147,13 @@ jobs:
         with:
           name: firmware
           path: fw
+      - uses: actions/download-artifact@v4
+        with:
+          name: sender
+          path: sender
       - name: Build Setup.exe
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/make_setup.ps1 -Firmware fw/ship_hud.ino.merged.bin
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/make_setup.ps1 -Firmware fw/ship_hud.ino.merged.bin -Sender sender
       - name: Install, check and uninstall silently
         shell: powershell
         run: |
@@ -147,13 +162,15 @@ jobs:
           $p = Start-Process build\MsfsCydHud-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Setup exited with $($p.ExitCode)" }
           foreach ($f in 'installer\install.ps1', 'firmware\msfs-cyd-hud.bin', 'tools\esptool\esptool.exe',
-                         'msfs-sender\MsfsHudSender\MsfsHudSender.csproj', 'ship_hud\ship_hud.ino', 'installed-by-setup.txt') {
+                         'sender\msfs-hud-sender.exe', 'ship_hud\ship_hud.ino', 'installed-by-setup.txt') {
             if (-not (Test-Path (Join-Path $app $f))) { throw "missing after install: $f" }
           }
           $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'MSFS CYD HUD\Set up or reconfigure MSFS CYD HUD.lnk'
           if (-not (Test-Path $lnk)) { throw 'Start-menu shortcut missing' }
           & (Join-Path $app 'tools\esptool\esptool.exe') version
           if ($LASTEXITCODE -ne 0) { throw 'bundled esptool does not run' }
+          & (Join-Path $app 'sender\msfs-hud-sender.exe') --help
+          if ($LASTEXITCODE -ne 0) { throw 'bundled sender does not run' }
           $p = Start-Process (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "Uninstall exited with $($p.ExitCode)" }
           Start-Sleep -Seconds 5
