@@ -39,24 +39,26 @@ Alerts (engine fire, stall, overspeed, gear unsafe) are shown by priority. The d
 
 ### Windows installer (recommended)
 
-Plug the display into the PC that runs MSFS 2024, then either double-click **`Install.cmd`** in a downloaded copy of this repository, or paste this into PowerShell:
+Plug the display into the PC that runs MSFS 2024 and run **`MsfsCydHud-Setup.exe`** — from the [latest release](https://github.com/florianbaer/msfs24-cyd-hud/releases/latest), or from the *Artifacts* of any CI run. Or paste this into PowerShell, which downloads and starts it:
 
 ```powershell
 irm https://raw.githubusercontent.com/florianbaer/msfs24-cyd-hud/main/installer/bootstrap.ps1 | iex
 ```
 
-The installer takes care of everything, without admin rights:
+Setup installs per user, without admin rights, and then runs the guided setup:
 
 1. **Finds the display** on USB by its USB chip (CH340 / CH9102 / CP210x) and points you to the driver if Windows has none.
-2. **USB or WiFi**: for WiFi it asks for the network and password; the password only ends up in the firmware, never in the repository folder.
-3. **Builds and flashes the firmware** with a private Arduino toolchain under `%LOCALAPPDATA%\MsfsCydHud` — your own Arduino IDE setup and libraries are left alone. For WiFi it reads the display's IP address from its boot log.
-4. **Builds the sender**: installs the .NET 10 SDK for your user if it is missing and finds the MSFS 2024 SDK (or explains how to install it from the simulator's developer menu).
+2. **USB or WiFi**: for WiFi it asks for the network and password.
+3. **Flashes the firmware** that comes ready-made in Setup.exe (with esptool, ~30 s; skipped when the display already runs this version) and sends the WiFi settings to the display over USB. The display keeps them in its flash, so switching between USB and WiFi never needs a re-flash. For WiFi it waits for the display to join and reads its IP address.
+4. **Builds the sender**: installs the .NET 10 SDK for your user if it is missing and finds the MSFS 2024 SDK (or explains how to install it from the simulator's developer menu). The sender is built on your PC because SimConnect comes with the MSFS SDK.
 5. **Tests the display** with a 15-second synthetic flight.
-6. **Starts the HUD with MSFS** via `exe.xml` (Steam and Microsoft Store, with a backup of the file), and adds Start-menu shortcuts and an *Apps & features* entry for uninstalling.
+6. **Starts the HUD with MSFS** via `exe.xml` (Steam and Microsoft Store, with a backup of the file) and adds Start-menu shortcuts.
 
-Re-run it any time to re-flash, switch between USB and WiFi or update the sender — your previous answers are the defaults. `Install.cmd -Yes` accepts all defaults, `Install.cmd -Uninstall` removes everything again. A full log is written to `%LOCALAPPDATA%\MsfsCydHud\install.log`.
+*Set up or reconfigure MSFS CYD HUD* in the Start menu runs the guided setup again — to switch between USB and WiFi, change the network, or update the sender; your previous answers are the defaults. Uninstall from *Settings › Apps*. A full log is written to `%LOCALAPPDATA%\MsfsCydHud\install.log`.
 
 For USB the sender is registered with the target `auto`: it finds the display by its USB chip, so a different COM number after re-plugging does not break anything.
+
+From a clone of the repository, **`Install.cmd`** runs the same guided setup; without a ready-made image it builds the firmware with a private Arduino toolchain under `%LOCALAPPDATA%\MsfsCydHud` (your own Arduino IDE setup stays untouched). `installer/make_setup.ps1` builds Setup.exe on Windows (needs Inno Setup; CI does this).
 
 ### Manual setup
 
@@ -136,11 +138,11 @@ The protocol is implemented twice and pinned by tests on both sides using the sa
 ├── ship_hud/
 │   ├── ship_hud.ino            # ESP32 sketch (7-screen cycling)
 │   ├── *.h                     # Copies of lib/ (the Arduino IDE needs them here)
-│   └── wifi_config.h.example   # Copy to wifi_config.h to enable WiFi/UDP
+│   └── wifi_config.h.example   # Optional build-time WiFi default (normally set over USB)
 ├── msfs-sender/                # C# / .NET 10 sender
 │   ├── MsfsHudSender/          # SimConnect source, conversions, protocol, transports
 │   └── MsfsHudSender.Tests/    # xUnit tests
-├── installer/                  # Windows installer (install.ps1) and web bootstrap
+├── installer/                  # Guided setup (install.ps1), Setup.exe script (Inno Setup), web bootstrap
 ├── Install.cmd                 # Double-click entry point for the installer
 ├── tests/
 │   ├── proto/                  # Host-side tests for the C++ decoder
@@ -161,6 +163,9 @@ dotnet test msfs-sender/
 
 # Firmware side of the protocol (any OS)
 c++ -std=c++17 -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test && ./decoder_test
+
+# USB configuration commands (WiFi settings over serial)
+c++ -std=c++17 -Ilib/hud_proto tests/proto/config_command_test.cpp -o config_command_test && ./config_command_test
 
 # Display-side easing
 c++ -std=c++17 -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_test && ./smoothing_test

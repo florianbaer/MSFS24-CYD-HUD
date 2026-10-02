@@ -2,7 +2,7 @@
 
 A companion app that reads flight data from Microsoft Flight Simulator 2024 via the native SimConnect C# API and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 7 HUD screens.
 
-> **Using the Windows installer?** `Install.cmd` in the repository root builds the sender, installs it to `%LOCALAPPDATA%\MsfsCydHud\app`, registers it in `exe.xml` and adds Start-menu shortcuts. This page covers doing it by hand.
+> **Using the Windows installer?** `MsfsCydHud-Setup.exe` (or `Install.cmd` in a clone) builds the sender, installs it to `%LOCALAPPDATA%\MsfsCydHud\app`, registers it in `exe.xml` and adds Start-menu shortcuts. This page covers doing it by hand.
 
 ## Requirements
 
@@ -155,4 +155,4 @@ All multi-byte fields are little-endian.
 -> Check the serial log at boot: `Display: DMA double-buffered` or `single buffer`, and the free heap. If DMA is the problem on your board, build with `-DHUD_USE_DMA=0` (PlatformIO: add it to `build_flags`; arduino-cli: `--build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0"`).
 
 **WiFi not connecting**
--> Copy `wifi_config.h.example` to `wifi_config.h`, fill in your credentials, and reflash the ESP32 firmware. See [SETUP.md](SETUP.md#wifi-optional).
+-> Run *Set up or reconfigure MSFS CYD HUD* from the Start menu and choose WiFi again (2.4 GHz networks only), or send the settings by hand. See [SETUP.md](SETUP.md#wifi-optional).

@@ -8,8 +8,9 @@
 
     1. finds the display on USB (and helps when the driver is missing)
     2. asks for USB or WiFi (and the WiFi credentials, which stay on this PC)
-    3. downloads a private, isolated Arduino toolchain, builds the firmware
-       and flashes it
+    3. flashes the firmware (the ready-made image Setup.exe ships, or one it
+       builds with a private Arduino toolchain when run from the sources) and
+       sends the WiFi settings to the display over USB
     4. installs the .NET SDK if needed, finds the MSFS SDK and builds the sender
     5. runs a short display test with synthetic flight data
     6. registers the sender in MSFS's exe.xml so it starts with the simulator,
@@ -75,6 +76,7 @@ $ArduinoLibs  = @('lvgl@9.2.2', 'TFT_eSPI@2.5.43')
 # Minimal SPIFFS gives the app 1.9 MB; the default 1.3 MB is ~99% full with WiFi.
 $Fqbn         = 'esp32:esp32:esp32:PartitionScheme=min_spiffs'
 $ArduinoCliUrl = 'https://downloads.arduino.cc/arduino-cli/arduino-cli_latest_Windows_64bit.zip'
+$EsptoolUrl   = 'https://github.com/espressif/esptool/releases/download/v4.9.0/esptool-v4.9.0-windows-amd64.zip'
 $DotnetInstallUrl = 'https://dot.net/v1/dotnet-install.ps1'
 $Ch340DriverUrl = 'https://www.wch-ic.com/downloads/CH341SER_EXE.html'
 
@@ -94,6 +96,8 @@ $LogFile      = Join-Path $InstallRoot 'install.log'
 $SettingsFile = Join-Path $InstallRoot 'settings.json'
 $StartMenuDir = Join-Path ([Environment]::GetFolderPath('Programs')) $AppName
 $UninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$AppId"
+# Setup.exe drops this marker: it then owns the uninstall entry and the uninstaller
+$FromSetup    = Test-Path (Join-Path $RepoRoot 'installed-by-setup.txt')
 
 # ---------------------------------------------------------------------------
 # Console helpers
@@ -314,9 +318,41 @@ function Get-ArduinoCli {
   return $exe
 }
 
-function Escape-CString([string]$s) { return $s.Replace('\', '\\').Replace('"', '\"') }
+# The firmware version the installer ships: from the bundled image's build or the sketch
+function Get-ShippedFirmwareVersion {
+  $sketch = Join-Path $RepoRoot 'ship_hud\ship_hud.ino'
+  if (Test-Path $sketch) {
+    $m = Select-String -Path $sketch -Pattern '#define\s+HUD_FW_VERSION\s+"([^"]+)"' | Select-Object -First 1
+    if ($m) { return $m.Matches[0].Groups[1].Value }
+  }
+  return $null
+}
 
-function Install-Firmware([string]$ComPort, [string]$Mode, [string]$Ssid, [Security.SecureString]$Password) {
+# Setup.exe ships a ready-made image; a plain source checkout builds one.
+function Get-BundledFirmware {
+  $bin = Join-Path $RepoRoot 'firmware\msfs-cyd-hud.bin'
+  if (Test-Path $bin) { return $bin }
+  return $null
+}
+
+function Get-Esptool {
+  foreach ($candidate in @((Join-Path $RepoRoot 'tools\esptool\esptool.exe'),
+                           (Join-Path $ToolsDir 'esptool\esptool-windows-amd64\esptool.exe'))) {
+    if (Test-Path $candidate) { return $candidate }
+  }
+  Write-Doing 'Downloading esptool (the ESP32 flasher)'
+  $dir = Join-Path $ToolsDir 'esptool'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $zip = Join-Path $dir 'esptool.zip'
+  Invoke-WebRequest -Uri $EsptoolUrl -OutFile $zip -UseBasicParsing
+  Expand-Archive -Path $zip -DestinationPath $dir -Force
+  Remove-Item $zip
+  return (Join-Path $dir 'esptool-windows-amd64\esptool.exe')
+}
+
+# Builds the firmware from the sketch with a private arduino-cli and returns
+# the merged flash image. Only used when no ready-made image is bundled.
+function Build-Firmware {
   $cli = Get-ArduinoCli
   # A private Arduino environment: the user's IDE, cores and libraries stay
   # untouched. Short folder names: the ESP32 toolchain has deep paths and
@@ -343,35 +379,28 @@ function Install-Firmware([string]$ComPort, [string]$Mode, [string]$Ssid, [Secur
   Copy-Item (Join-Path $RepoRoot 'config\lv_conf.h') (Join-Path $libs 'lv_conf.h') -Force
   Copy-Item (Join-Path $RepoRoot 'config\User_Setup.h') (Join-Path $libs 'TFT_eSPI\User_Setup.h') -Force
 
-  # Build from a copy so the WiFi password never lands in the repository folder
-  $sketch = Join-Path $BuildDir 'ship_hud'
-  if (Test-Path $sketch) { Remove-Item $sketch -Recurse -Force }
-  New-Item -ItemType Directory -Force -Path $sketch | Out-Null
-  Copy-Item (Join-Path $RepoRoot 'ship_hud\*') $sketch -Recurse -Force
-  Remove-Item (Join-Path $sketch 'wifi_config.h') -ErrorAction SilentlyContinue
-  if ($Mode -eq 'Wifi') {
-    $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
-    @(
-      '#pragma once',
-      '// Written by the installer. Delete this build folder to remove it.',
-      ('#define WIFI_SSID "{0}"' -f (Escape-CString $Ssid)),
-      ('#define WIFI_PASS "{0}"' -f (Escape-CString $plain)),
-      '#define UDP_PORT  4242'
-    ) | Set-Content -Path (Join-Path $sketch 'wifi_config.h') -Encoding ASCII
-    $plain = $null
-  }
-
+  # WiFi is configured over USB after flashing, so the sketch is built as is
   $buildPath = Join-Path $BuildDir 'out'
+  $sketch = Join-Path $RepoRoot 'ship_hud'
   if (-not (Invoke-Tool $cli @('compile', '--fqbn', $Fqbn, '--build-path', $buildPath, $sketch) 'Compiling the firmware (takes a few minutes the first time)' $arduinoEnv)) {
     Stop-Installer 'The firmware did not compile. Please open an issue and attach the log.'
   }
+  $image = Join-Path $buildPath 'ship_hud.ino.merged.bin'
+  if (-not (Test-Path $image)) { Stop-Installer 'The firmware build did not produce a flash image.' }
   Write-Ok 'Firmware built'
+  return $image
+}
 
+function Install-Firmware([string]$ComPort, [string]$Image) {
+  $esptool = Get-Esptool
   Stop-Sender
   while ($true) {
-    if (Invoke-Tool $cli @('upload', '--fqbn', $Fqbn, '--input-dir', $buildPath, '-p', $ComPort, $sketch) "Flashing the display on $ComPort" $arduinoEnv) {
+    $flashArgs = @('--chip', 'esp32', '--port', $ComPort, '--baud', '921600',
+                   '--before', 'default_reset', '--after', 'hard_reset',
+                   'write_flash', '-z', '0x0', $Image)
+    if (Invoke-Tool $esptool $flashArgs "Flashing the display on $ComPort (about 30 seconds)") {
       Write-Ok 'Display flashed'
-      break
+      return
     }
     Write-Warn 'Flashing failed.'
     Write-Info 'Close anything that uses the port (Arduino serial monitor, the sender).'
@@ -380,31 +409,112 @@ function Install-Firmware([string]$ComPort, [string]$Mode, [string]$Ssid, [Secur
   }
 }
 
-# Reads the boot log of the freshly flashed display to learn its IP address.
-function Get-DisplayIp([string]$ComPort, [int]$TimeoutSeconds = 40) {
-  Write-Doing 'Waiting for the display to join the WiFi network'
+# ---- talking to the display over USB (see lib/hud_proto/config_command.h) ----
+
+function ConvertTo-HexString([string]$Text) {
+  if ($Text -eq '') { return '-' }
+  return (([Text.Encoding]::UTF8.GetBytes($Text) | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
+function New-WifiCommand([string]$Ssid, [string]$Password) {
+  return 'HUDCFG WIFI {0} {1}' -f (ConvertTo-HexString $Ssid), (ConvertTo-HexString $Password)
+}
+
+# "HUDCFG INFO fw=1.1.0 wifi=connected ip=192.168.1.5 port=4242" -> hashtable
+function ConvertFrom-InfoLine([string]$Line) {
+  $info = @{}
+  if ($Line -notmatch '^HUDCFG INFO ') { return $null }
+  foreach ($pair in ($Line.Substring(12) -split ' ')) {
+    $kv = $pair -split '=', 2
+    if ($kv.Count -eq 2) { $info[$kv[0]] = $kv[1] }
+  }
+  return $info
+}
+
+function Open-Display([string]$ComPort) {
   $sp = New-Object System.IO.Ports.SerialPort $ComPort, 115200
-  $sp.ReadTimeout = 500
+  $sp.ReadTimeout = 250
+  $sp.NewLine = "`n"
+  # Keep EN and IO0 (wired to RTS/DTR on these boards) released: no reset on open
   $sp.DtrEnable = $false
   $sp.RtsEnable = $false
-  try {
-    $sp.Open()
-    # Pulse EN (wired to RTS) so the boot log, which prints the IP once, starts now
-    $sp.RtsEnable = $true
-    Start-Sleep -Milliseconds 150
-    $sp.RtsEnable = $false
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-      try { $line = $sp.ReadLine() } catch [TimeoutException] { continue }
-      Add-InstallLog "     serial: $line"
-      if ($line -match 'Listening on (\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
+  $sp.Open()
+  return $sp
+}
+
+# Sends a command until a HUDCFG reply arrives (the display may still be booting).
+function Invoke-DisplayCommand($Port, [string]$Command, [int]$TimeoutSeconds = 20) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $nextSend = Get-Date
+  while ((Get-Date) -lt $deadline) {
+    if ((Get-Date) -ge $nextSend) {
+      $Port.Write("`n$Command`n")
+      $nextSend = (Get-Date).AddSeconds(2)
     }
-  } catch {
-    Add-InstallLog "serial read failed: $_"
-  } finally {
-    if ($sp.IsOpen) { $sp.Close() }
+    try { $line = $Port.ReadLine().Trim() } catch [TimeoutException] { continue }
+    if ($line) { Add-InstallLog "     display: $line" }
+    if ($line -match '^HUDCFG (OK|ERR|INFO)') { return $line }
   }
   return $null
+}
+
+function Get-DisplayInfo([string]$ComPort) {
+  $sp = $null
+  try {
+    $sp = Open-Display $ComPort
+    return (ConvertFrom-InfoLine (Invoke-DisplayCommand $sp 'HUDCFG INFO' 8))
+  } catch {
+    Add-InstallLog "display info failed: $_"
+    return $null
+  } finally {
+    if ($sp -and $sp.IsOpen) { $sp.Close() }
+  }
+}
+
+# Stores the WiFi network on the display (or switches WiFi off) and, for WiFi,
+# waits until it has joined and returns its IP address.
+function Set-DisplayConnection([string]$ComPort, [string]$Mode, [string]$Ssid, [Security.SecureString]$Password) {
+  $sp = $null
+  try {
+    $sp = Open-Display $ComPort
+    if ($Mode -ne 'Wifi') {
+      $reply = Invoke-DisplayCommand $sp 'HUDCFG WIFI-OFF'
+      if ($reply -ne 'HUDCFG OK') { Write-Warn 'The display did not confirm the USB setting.'; return $null }
+      Write-Ok 'Display set to USB'
+      return $null
+    }
+
+    $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($Password))
+    $command = New-WifiCommand $Ssid $plain
+    $plain = $null
+    Write-Doing "Sending the WiFi settings to the display"
+    # Not via Invoke-DisplayCommand: that would log the command with the password
+    $sp.Write("`n$command`n")
+    $command = $null
+    $deadline = (Get-Date).AddSeconds(15)
+    $reply = $null
+    while (-not $reply -and (Get-Date) -lt $deadline) {
+      try { $line = $sp.ReadLine().Trim() } catch [TimeoutException] { continue }
+      if ($line -match '^HUDCFG (OK|ERR)') { $reply = $line }
+    }
+    if ($reply -ne 'HUDCFG OK') { Write-Warn "The display did not accept the WiFi settings ($reply)."; return $null }
+    Write-Ok 'WiFi settings stored on the display'
+
+    Write-Doing 'Waiting for the display to join the network'
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline) {
+      $info = ConvertFrom-InfoLine (Invoke-DisplayCommand $sp 'HUDCFG INFO' 5)
+      if ($info -and $info['wifi'] -eq 'connected' -and $info['ip'] -match '^\d+\.\d+\.\d+\.\d+$') { return $info['ip'] }
+      Start-Sleep -Seconds 2
+    }
+    return $null
+  } catch {
+    Add-InstallLog "display configuration failed: $_"
+    Write-Warn "Could not talk to the display on ${ComPort}: $($_.Exception.Message)"
+    return $null
+  } finally {
+    if ($sp -and $sp.IsOpen) { $sp.Close() }
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -619,12 +729,15 @@ function Install-Shortcuts([string]$Exe, [string]$TargetArgs) {
   New-Item -ItemType Directory -Force -Path $StartMenuDir | Out-Null
   New-Shortcut (Join-Path $StartMenuDir "$AppName.lnk") $Exe $TargetArgs 'Stream MSFS 2024 telemetry to the display'
   New-Shortcut (Join-Path $StartMenuDir "$AppName - Display test.lnk") $Exe "$TargetArgs --demo".Trim() 'Send a demo flight to the display'
-  $uninstall = Join-Path $InstallRoot 'Uninstall.cmd'
-  New-Shortcut (Join-Path $StartMenuDir "Uninstall $AppName.lnk") $uninstall '' "Remove $AppName" $env:USERPROFILE
+  if (-not $FromSetup) {  # Setup.exe adds its own uninstall shortcut
+    $uninstall = Join-Path $InstallRoot 'Uninstall.cmd'
+    New-Shortcut (Join-Path $StartMenuDir "Uninstall $AppName.lnk") $uninstall '' "Remove $AppName" $env:USERPROFILE
+  }
   Write-Ok 'Start-menu shortcuts created'
 }
 
 function Register-Uninstaller {
+  if ($FromSetup) { return }  # Setup.exe registered itself in Apps & features
   # Keep a copy of this script so uninstalling works without the repository
   Copy-Item $PSCommandPath (Join-Path $InstallRoot 'install.ps1') -Force
   @(
@@ -687,8 +800,12 @@ if (-not (Test-Path (Join-Path $RepoRoot 'ship_hud\ship_hud.ino'))) {
 }
 
 $prev = Get-Settings
-Write-Host '  This sets up the display and the MSFS companion app. It takes 5-15 minutes,'
-Write-Host '  most of it downloading the ESP32 toolchain on the first run.'
+Write-Host '  This sets up the display and the MSFS companion app.'
+if (Get-BundledFirmware) {
+  Write-Host '  It takes a few minutes; the first run downloads the .NET SDK if it is missing.'
+} else {
+  Write-Host '  It takes 5-15 minutes, most of it downloading the ESP32 toolchain on the first run.'
+}
 Write-Host "  Everything goes to $InstallRoot" -ForegroundColor DarkGray
 
 # ---- 1. Display ----------------------------------------------------------
@@ -731,21 +848,35 @@ if ($Connection -eq 'Wifi') {
 }
 
 # ---- 3. Firmware -------------------------------------------------------------
-Write-Step 'Build and flash the display firmware'
+Write-Step 'Flash and configure the display'
 $displayIp = Get-Setting $prev 'DisplayIp'
 if ($SkipFirmware) {
   Write-Info 'Skipped (-SkipFirmware)'
 } else {
-  Install-Firmware $comPort $Connection $WifiSsid $password
+  Stop-Sender
+  $shipped = Get-ShippedFirmwareVersion
+  $running = Get-DisplayInfo $comPort
+  $flash = $true
+  if ($running -and $shipped -and $running['fw'] -eq $shipped) {
+    Write-Ok "The display already runs firmware $shipped"
+    $flash = Confirm-Choice 'Flash it again anyway?' $false
+  }
+  if ($flash) {
+    $image = Get-BundledFirmware
+    if ($image) { Write-Ok "Using the ready-made firmware $shipped" }
+    else { $image = Build-Firmware }
+    Install-Firmware $comPort $image
+  }
+
+  $ip = Set-DisplayConnection $comPort $Connection $WifiSsid $password
   $password = $null
   if ($Connection -eq 'Wifi') {
-    $ip = Get-DisplayIp $comPort
     if ($ip) {
       $displayIp = $ip
       Write-Ok "Display is on the network at $displayIp"
       Write-Info 'Tip: give it a fixed address (DHCP reservation) in your router.'
     } else {
-      Write-Warn 'The display did not report an IP address (wrong password, or a 5 GHz-only network?).'
+      Write-Warn 'The display did not join the network (wrong password, or a 5 GHz-only network?).'
       $displayIp = Read-Value 'Enter the display IP address if you know it' $displayIp
     }
   }
@@ -810,7 +941,7 @@ Write-Host '  ==============================================================' -F
 Write-Host "   Done! Start a flight in MSFS 2024 - the HUD comes alive." -ForegroundColor Green
 Write-Host '   Tap the display to cycle through the 7 screens.' -ForegroundColor Green
 Write-Host '  ==============================================================' -ForegroundColor DarkGreen
-Write-Host "   Re-run this installer to re-flash or switch USB/WiFi." -ForegroundColor DarkGray
+Write-Host "   Re-run the setup (Start menu) to switch USB/WiFi or update." -ForegroundColor DarkGray
 Write-Host "   Uninstall: Settings > Apps > $AppName" -ForegroundColor DarkGray
 Write-Host ''
 Add-InstallLog '---- install finished ----'

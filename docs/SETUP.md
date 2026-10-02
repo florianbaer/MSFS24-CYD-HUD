@@ -1,6 +1,6 @@
 # Setup Guide
 
-> **On Windows, the installer does all of this for you:** double-click `Install.cmd` in the repository root (see the [README](../README.md#windows-installer-recommended)). The steps below are for PlatformIO, the Arduino IDE, other operating systems, or if you want to know what the installer does.
+> **On Windows, `MsfsCydHud-Setup.exe` does all of this for you** and flashes a ready-made firmware (see the [README](../README.md#windows-installer-recommended)). The steps below are for building the firmware yourself: PlatformIO, the Arduino IDE, other operating systems.
 
 The display and LVGL settings live in [`config/`](../config) and are shared by both build systems:
 
@@ -84,12 +84,18 @@ arduino-cli upload  --fqbn $FQBN -p <PORT> ship_hud
 
 ## WiFi (optional)
 
-USB serial works out of the box. To also receive telemetry over WiFi:
+USB serial works out of the box. To also receive telemetry over WiFi, the display needs your network (2.4 GHz). It keeps it in its flash memory, so this survives re-flashing with the same firmware build and never needs a rebuild:
 
-1. Copy `ship_hud/wifi_config.h.example` to `ship_hud/wifi_config.h` and fill in your network name and password (the file is gitignored).
-2. Rebuild and flash.
-3. Open the serial monitor at 115200 baud: once connected the display prints its IP address, which is what you pass to the sender (`msfs-hud-sender <ip> --udp`).
+- **With the installer:** choose WiFi in the guided setup. It sends the settings over USB and shows the display's IP address.
+- **By hand:** send one line over the serial port (115200 baud), with the network name and password as the hex of their UTF-8 bytes (`-` for an open network):
+  ```
+  HUDCFG WIFI 486f6d65 70617373776f7264      (network "Home", password "password")
+  HUDCFG WIFI-OFF                            (back to USB only)
+  HUDCFG INFO                                (firmware version, WiFi state, IP address)
+  ```
+  The display answers `HUDCFG OK`, and prints `WiFi connected. Listening on <ip>:4242` once it has joined; that IP is what you pass to the sender (`msfs-hud-sender <ip> --udp`).
+- **At build time:** copy `ship_hud/wifi_config.h.example` to `ship_hud/wifi_config.h` and fill it in (the file is gitignored). It is used when nothing is stored on the display.
 
 The display keeps listening on USB serial as well, and reconnects by itself if the network drops.
 
-> **Flash size:** with WiFi enabled the firmware fills about 99% of the default 1.3 MB app partition on core 3.x, which is why every build here (PlatformIO, CI, the installer) uses **Minimal SPIFFS (1.9MB APP with OTA)**.
+> **Flash size:** the firmware with WiFi needs more than the default 1.3 MB app partition, which is why every build here (PlatformIO, CI, the installer) uses **Minimal SPIFFS (1.9MB APP with OTA)**. With the default scheme, build with `-DHUD_WIFI=0` for a USB-only firmware.

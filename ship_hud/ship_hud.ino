@@ -13,11 +13,27 @@
 #include "hud_widgets.h"
 #include "hud_proto.h"
 
-#if __has_include("wifi_config.h")
-#include "wifi_config.h"
+#define HUD_FW_VERSION "1.1.0"
+
+// WiFi/UDP support. The network is normally set by the installer over USB and
+// stored in flash (see config_command.h); a wifi_config.h next to the sketch
+// still works and becomes the default when nothing is stored.
+// Build with -DHUD_WIFI=0 for a USB-only firmware that fits the default
+// 1.3 MB app partition.
+#ifndef HUD_WIFI
+#define HUD_WIFI 1
+#endif
+#if HUD_WIFI
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <Preferences.h>
 #define WIFI_ENABLED
+#if __has_include("wifi_config.h")
+#include "wifi_config.h"
+#endif
+#endif
+#ifndef UDP_PORT
+#define UDP_PORT 4242
 #endif
 
 #define TFT_HOR_RES   320
@@ -188,10 +204,100 @@ static const uint32_t REPORT_MS = 10000;
 static const uint32_t NO_DATA_TIMEOUT_MS = 2000;
 lv_obj_t* lblNoData = nullptr;
 
+LineCollector cmdLine;
+
 #ifdef WIFI_ENABLED
 WiFiUDP udp;
 bool udpListening = false;
+bool wifiOn = false;
+char wifiSsid[33] = {};
+char wifiPass[64] = {};
+
+// Credentials live in NVS ("hud" namespace), written by "HUDCFG WIFI ..."
+static void loadWifiSettings() {
+  Preferences prefs;
+  prefs.begin("hud", true);
+  String ssid = prefs.getString("ssid", "");
+  String pass = prefs.getString("pass", "");
+  prefs.end();
+#ifdef WIFI_SSID
+  if (ssid.length() == 0) { ssid = WIFI_SSID; pass = WIFI_PASS; }
 #endif
+  strncpy(wifiSsid, ssid.c_str(), sizeof(wifiSsid) - 1);
+  strncpy(wifiPass, pass.c_str(), sizeof(wifiPass) - 1);
+}
+
+static void saveWifiSettings(const char* ssid, const char* pass) {
+  Preferences prefs;
+  prefs.begin("hud", false);
+  prefs.putString("ssid", ssid);
+  prefs.putString("pass", pass);
+  prefs.end();
+}
+
+static void stopWifi() {
+  if (udpListening) { udp.stop(); udpListening = false; }
+  if (wifiOn) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    wifiOn = false;
+  }
+}
+
+// Non-blocking: loop() starts listening once the connection is up,
+// and again after every reconnect.
+static void startWifi() {
+  stopWifi();
+  if (wifiSsid[0] == '\0') return;
+  Serial.printf("Connecting to WiFi '%s'...\n", wifiSsid);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(wifiSsid, wifiPass);
+  wifiOn = true;
+}
+#endif
+
+// ---- USB configuration commands (sent by the installer) ----
+
+static void handleConfigLine(const char* line) {
+  CfgRequest req = parseConfigLine(line);
+  switch (req.cmd) {
+    case CfgCmd::None:
+      return;  // not a command: ignore
+    case CfgCmd::Invalid:
+      Serial.println("HUDCFG ERR invalid command");
+      return;
+    case CfgCmd::Info: {
+#ifdef WIFI_ENABLED
+      const char* state = !wifiOn ? "off" : (WiFi.status() == WL_CONNECTED ? "connected" : "connecting");
+      String ip = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String("-");
+      Serial.printf("HUDCFG INFO fw=%s wifi=%s ip=%s port=%d\n", HUD_FW_VERSION, state, ip.c_str(), UDP_PORT);
+#else
+      Serial.printf("HUDCFG INFO fw=%s wifi=unsupported ip=- port=0\n", HUD_FW_VERSION);
+#endif
+      return;
+    }
+    case CfgCmd::Wifi:
+#ifdef WIFI_ENABLED
+      saveWifiSettings(req.ssid, req.pass);
+      strncpy(wifiSsid, req.ssid, sizeof(wifiSsid) - 1);
+      strncpy(wifiPass, req.pass, sizeof(wifiPass) - 1);
+      Serial.println("HUDCFG OK");
+      startWifi();
+#else
+      Serial.println("HUDCFG ERR wifi unsupported");
+#endif
+      return;
+    case CfgCmd::WifiOff:
+#ifdef WIFI_ENABLED
+      saveWifiSettings("", "");
+      wifiSsid[0] = wifiPass[0] = '\0';
+      stopWifi();
+#endif
+      Serial.println("HUDCFG OK");
+      return;
+  }
+}
 
 void handleAttitude(const uint8_t* payload, int len) {
   if (len < (int)sizeof(AttitudeMsg)) return;
@@ -362,11 +468,8 @@ void setup() {
   lv_screen_load(screens[0]);
 
 #ifdef WIFI_ENABLED
-  // Non-blocking: loop() starts listening once the connection is up,
-  // and again after every reconnect.
-  Serial.printf("Connecting to WiFi '%s'...\n", WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  loadWifiSettings();
+  startWifi();
 #endif
 
   // Hardware watchdog: reset device if loop hangs for >5s
@@ -382,7 +485,7 @@ void setup() {
   lastDataMs = millis();
   Serial.printf("Free heap: %u bytes (largest block %u)\n",
                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
-  Serial.println("HUD ready. Touch to cycle screens (7 modes). Waiting for data...");
+  Serial.printf("HUD ready (firmware %s). Touch to cycle screens (7 modes). Waiting for data...\n", HUD_FW_VERSION);
 }
 
 void loop() {
@@ -390,13 +493,16 @@ void loop() {
   lv_timer_handler();
 
   // Feed serial bytes to frame decoder
+  // ... and to the line collector, which picks out configuration commands
   while (Serial.available()) {
-    decoder.feed(Serial.read());
+    uint8_t c = Serial.read();
+    decoder.feed(c);
     if (decoder.available()) processFrame();
+    if (cmdLine.feed(c)) handleConfigLine(cmdLine.line());
   }
 
 #ifdef WIFI_ENABLED
-  if (WiFi.status() == WL_CONNECTED) {
+  if (wifiOn && WiFi.status() == WL_CONNECTED) {
     if (!udpListening) {
       udp.begin(UDP_PORT);
       udpListening = true;

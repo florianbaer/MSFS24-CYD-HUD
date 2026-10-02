@@ -47,8 +47,29 @@ try {
   Check ((Get-Setting $s 'WifiSsid') -eq 'Home "5G"') 'SSID with quotes round-trips'
   Check ((Get-Setting $s 'DisplayIp' 'none') -eq 'none') 'empty value falls back to the default'
 
-  # ---- WiFi credentials end up in a C string literal ------------------------
-  Check ((Escape-CString 'pa"ss\word') -eq 'pa\"ss\\word') 'quotes and backslashes are escaped'
+  # ---- WiFi settings travel to the display as hex (config_command.h) --------
+  Check ((ConvertTo-HexString 'AB c') -eq '41422063') 'text is sent as the hex of its bytes'
+  Check ((ConvertTo-HexString '') -eq '-') 'an empty password is sent as "-"'
+  Check ((ConvertTo-HexString ([string][char]0x00E4)) -eq 'c3a4') 'non-ASCII characters are sent as UTF-8'
+  Check ((New-WifiCommand 'Home "5G"' 'p w') -eq 'HUDCFG WIFI 486f6d652022354722 702077') 'the WiFi command has the format the firmware parses'
+  Check ((New-WifiCommand 'Cafe' '') -eq 'HUDCFG WIFI 43616665 -') 'an open network has no password'
+
+  $info = ConvertFrom-InfoLine 'HUDCFG INFO fw=1.1.0 wifi=connected ip=192.168.1.50 port=4242'
+  Check ($info['fw'] -eq '1.1.0' -and $info['wifi'] -eq 'connected' -and $info['ip'] -eq '192.168.1.50') 'the INFO reply is parsed'
+  Check ($null -eq (ConvertFrom-InfoLine 'HUDCFG OK')) 'other replies are not taken for INFO'
+
+  # ---- firmware image and version --------------------------------------------
+  $RepoRoot = Join-Path $work 'bundle'
+  New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot 'ship_hud') | Out-Null
+  '#define HUD_FW_VERSION "9.8.7"' | Set-Content (Join-Path $RepoRoot 'ship_hud\ship_hud.ino')
+  Check ((Get-ShippedFirmwareVersion) -eq '9.8.7') 'the shipped firmware version is read from the sketch'
+  Check ($null -eq (Get-BundledFirmware)) 'a source checkout has no ready-made image'
+  New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot 'firmware') | Out-Null
+  Set-Content (Join-Path $RepoRoot 'firmware\msfs-cyd-hud.bin') 'x'
+  Check ((Get-BundledFirmware) -like '*msfs-cyd-hud.bin') 'the image bundled by Setup.exe is found'
+  $realSketch = Join-Path $PSScriptRoot '..\..\ship_hud\ship_hud.ino'
+  $RepoRoot = Split-Path -Parent (Split-Path -Parent $realSketch)
+  Check ((Get-ShippedFirmwareVersion) -match '^\d+\.\d+\.\d+$') 'the real sketch declares a firmware version'
 
   # ---- display detection -----------------------------------------------------
   function Get-CimInstance { param($ClassName, $ErrorAction)
