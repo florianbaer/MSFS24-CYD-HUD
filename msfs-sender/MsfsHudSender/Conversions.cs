@@ -101,6 +101,41 @@ public static class Conversions
         return (alt, HeadingTenths(hdgDeg));
     }
 
+    private const double KgPerLb = 0.45359237;
+
+    /// <summary>Turbine values for the ECAM: N1/N2 % → tenths, EGT °C, fuel flow lb/h → kg/h.</summary>
+    public static (ushort n1, ushort n2, short egt, ushort fuelFlow) ConvertEcamEngine(
+        double n1Pct, double n2Pct, double egtC, double fuelFlowPph)
+    {
+        static ushort Tenths(double pct) => (ushort)Math.Clamp((int)Math.Round(pct * 10), 0, 2000);
+        var egt = (short)Math.Clamp((int)Math.Round(egtC), -100, 2000);
+        var ff = (ushort)Math.Clamp((int)Math.Round(fuelFlowPph * KgPerLb), 0, 65535);
+        return (Tenths(n1Pct), Tenths(n2Pct), egt, ff);
+    }
+
+    /// <summary>Fuel on board lb → kg; flaps detent; slat/flap positions in % (0..100).</summary>
+    public static (uint fobKg, byte flapsIndex, byte slatsPct, byte flapsPct) ConvertEcamStatus(
+        double fobLbs, double flapsIndex, double slatsPct, double flapsPct)
+    {
+        var fob = (uint)Math.Clamp(Math.Round(fobLbs * KgPerLb), 0, uint.MaxValue);
+        static byte Pct(double v) => (byte)Math.Clamp((int)Math.Round(v), 0, 100);
+        return (fob, (byte)Math.Clamp((int)Math.Round(flapsIndex), 0, 9), Pct(slatsPct), Pct(flapsPct));
+    }
+
+    public static ushort BuildMemoFlags(bool parkBrake, bool speedBrake, bool spoilersArmed,
+                                        bool seatBelts, bool apuAvail, bool engAntiIce, bool landingLights)
+    {
+        ushort flags = 0;
+        if (parkBrake) flags |= Protocol.Messages.MemoParkBrake;
+        if (speedBrake) flags |= Protocol.Messages.MemoSpeedBrake;
+        if (spoilersArmed) flags |= Protocol.Messages.MemoSpoilersArmed;
+        if (seatBelts) flags |= Protocol.Messages.MemoSeatBelts;
+        if (apuAvail) flags |= Protocol.Messages.MemoApuAvail;
+        if (engAntiIce) flags |= Protocol.Messages.MemoEngAntiIce;
+        if (landingLights) flags |= Protocol.Messages.MemoLandingLights;
+        return flags;
+    }
+
     public static ushort BuildAlertFlags(bool stall, bool overspeed, bool gearUnsafe,
                                           bool lowFuel, bool engineFire, bool apDisconnect)
     {

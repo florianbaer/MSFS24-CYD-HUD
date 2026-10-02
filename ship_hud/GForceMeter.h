@@ -1,5 +1,6 @@
 #pragma once
 #include <lvgl.h>
+#include "Anim.h"
 #include <stdio.h>
 #include "hud_proto.h"
 
@@ -104,7 +105,42 @@ public:
     lv_obj_set_style_text_font(_lblPeakNeg, &lv_font_montserrat_14, 0);
     lv_label_set_text(_lblPeakNeg, "+1.00G");
     lv_obj_set_pos(_lblPeakNeg, 195, 128);
+
+    lv_obj_t* hint = lv_label_create(parent);
+    lv_obj_set_style_text_color(hint, lv_color_make(80, 80, 80), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_10, 0);
+    lv_label_set_text(hint, "TAP TO RESET");
+    lv_obj_set_pos(hint, 196, 148);
+
+    // The whole peak block is one big touch target
+    lv_obj_t* resetArea = lv_obj_create(parent);
+    lv_obj_remove_style_all(resetArea);
+    lv_obj_remove_flag(resetArea, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(resetArea, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(resetArea, 185, 88);
+    lv_obj_set_size(resetArea, 130, 76);
+    lv_obj_set_style_radius(resetArea, 6, 0);
+    lv_obj_set_style_border_color(resetArea, lv_color_make(120, 120, 120), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(resetArea, 1, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(resetArea, [](lv_event_t* e) {
+      ((GForceMeter*)lv_event_get_user_data(e))->resetPeaks();
+    }, LV_EVENT_CLICKED, this);
   }
+
+  /// Starts peak tracking again from the current load factor.
+  void resetPeaks() {
+    if (!_lblPeakPos) return;
+    int16_t now = _prevGy == INT16_MIN ? 100 : _prevGy;
+    _peakPosY = now;
+    _peakNegY = now;
+    char buf[16];
+    formatGSigned(buf, sizeof(buf), _peakPosY);
+    lv_label_set_text(_lblPeakPos, buf);
+    lv_label_set_text(_lblPeakNeg, buf);
+  }
+
+  int16_t peakPositive() const { return _peakPosY; }
+  int16_t peakNegative() const { return _peakNegY; }
 
   void setValue(int16_t gx, int16_t gy, int16_t gz) {
     if (!_arcVertG) return;
@@ -121,7 +157,7 @@ public:
     int16_t gy_clamped = gy;
     if (gy_clamped > 600) gy_clamped = 600;
     if (gy_clamped < -200) gy_clamped = -200;
-    lv_arc_set_value(_arcVertG, gy_clamped);
+    hud::arcTo(_arcVertG, gy_clamped);
 
     // Color: green normal, yellow >2G, red >4G or negative
     lv_color_t vColor;
@@ -139,7 +175,7 @@ public:
     int16_t gz_clamped = gz;
     if (gz_clamped > 200) gz_clamped = 200;
     if (gz_clamped < -200) gz_clamped = -200;
-    lv_bar_set_value(_barLatG, gz_clamped, LV_ANIM_OFF);
+    hud::barTo(_barLatG, gz_clamped);
     formatG(buf, sizeof(buf), gz);
     lv_label_set_text(_lblLatG, buf);
 

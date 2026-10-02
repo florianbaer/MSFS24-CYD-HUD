@@ -23,7 +23,7 @@ LVGL_SRCS   = $(shell find $(LVGL_DIR)/src -name '*.c' 2>/dev/null)
 LVGL_OBJS   = $(patsubst $(LVGL_DIR)/%.c,$(BUILD)/obj/%.o,$(LVGL_SRCS))
 WIDGETS    := $(wildcard $(ROOT)/lib/hud_widgets/*.h $(ROOT)/lib/hud_proto/*.h)
 
-.PHONY: all clean
+.PHONY: all clean touch-test
 # Sub-make so the LVGL source list is evaluated after the clone.
 all: $(LVGL_STAMP)
 	$(MAKE) $(BUILD)/render
@@ -36,6 +36,19 @@ $(LVGL_STAMP):
 $(BUILD)/render: $(BUILD)/main.o $(LVGL_OBJS)
 	@echo "link $@"
 	@$(CXX) -o $@ $^ -lz
+
+# Touch controls through LVGL with a scripted finger (tests/widgets/touch_test.cpp)
+touch-test: $(LVGL_STAMP)
+	$(MAKE) $(BUILD)/touch_test
+	$(BUILD)/touch_test
+
+$(BUILD)/touch_test: $(BUILD)/touch_test.o $(LVGL_OBJS)
+	@echo "link $@"
+	@$(CXX) -o $@ $^
+
+$(BUILD)/touch_test.o: $(ROOT)/tests/widgets/touch_test.cpp $(ROOT)/config/lv_conf.h $(WIDGETS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD)/main.o: main.cpp stubs/Arduino.h $(ROOT)/config/lv_conf.h $(WIDGETS)
 	@mkdir -p $(dir $@)

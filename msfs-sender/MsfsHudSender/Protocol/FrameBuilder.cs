@@ -21,6 +21,9 @@ public static class FrameBuilder
         return frame;
     }
 
+    /// <summary>Command from the display (the display builds these; used by tests and tools).</summary>
+    public static byte[] FrameCommand(HudCommand command) => Frame(Messages.MsgCommand, [(byte)command]);
+
     /// <summary>Attitude: pitch/roll/heading in tenths of degrees (int16 LE).</summary>
     public static byte[] FrameAttitude(short pitch, short roll, short heading)
     {
@@ -101,6 +104,30 @@ public static class FrameBuilder
     }
 
     /// <summary>Autopilot: mode_flags(u16), target_alt(i32), target_hdg(i16).</summary>
+    /// <summary>ECAM engine: N1/N2 in tenths of %, EGT in °C, fuel flow in kg/h.</summary>
+    public static byte[] FrameEcamEngine(byte engineIdx, ushort n1, ushort n2, short egt, ushort fuelFlow)
+    {
+        Span<byte> payload = stackalloc byte[9];
+        payload[0] = engineIdx;
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[1..], n1);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[3..], n2);
+        BinaryPrimitives.WriteInt16LittleEndian(payload[5..], egt);
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[7..], fuelFlow);
+        return Frame(Messages.MsgEcamEngine, payload);
+    }
+
+    /// <summary>ECAM status: fuel on board (kg), flaps detent and positions, memo flags.</summary>
+    public static byte[] FrameEcamStatus(uint fobKg, byte flapsIndex, byte slatsPct, byte flapsPct, ushort memoFlags)
+    {
+        Span<byte> payload = stackalloc byte[9];
+        BinaryPrimitives.WriteUInt32LittleEndian(payload[0..], fobKg);
+        payload[4] = flapsIndex;
+        payload[5] = slatsPct;
+        payload[6] = flapsPct;
+        BinaryPrimitives.WriteUInt16LittleEndian(payload[7..], memoFlags);
+        return Frame(Messages.MsgEcamStatus, payload);
+    }
+
     public static byte[] FrameAutopilot(ushort modeFlags, int targetAlt, short targetHdg)
     {
         Span<byte> payload = stackalloc byte[8];

@@ -8,9 +8,11 @@
     <AssemblyName>msfs-hud-sender</AssemblyName>
   </PropertyGroup>
 
-  <!-- SimConnect ships with the MSFS SDK and is not redistributable via NuGet.
-       Without it the project still builds (for the protocol tests) but cannot talk to the sim. -->
-  <PropertyGroup>
+  <!-- The sender talks to MSFS with its own SimConnect client (SimConnect/), so
+       the default build needs neither the MSFS SDK nor Microsoft's DLLs.
+       -p:UseSdkSimConnect=true additionally builds the old client on Microsoft's
+       managed SimConnect API (needs MSFS_SDK), selectable with the sender option sdk-simconnect. -->
+  <PropertyGroup Condition="'$(UseSdkSimConnect)' == 'true'">
     <SimConnectManagedDll>$(MSFS_SDK)\SimConnect SDK\lib\managed\Microsoft.FlightSimulator.SimConnect.dll</SimConnectManagedDll>
     <SimConnectNativeDll>$(MSFS_SDK)\SimConnect SDK\lib\SimConnect.dll</SimConnectNativeDll>
     <HasSimConnect Condition="Exists('$(SimConnectManagedDll)')">true</HasSimConnect>
@@ -24,6 +26,10 @@
     <PackageReference Include="System.IO.Ports" Version="10.0.12" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="MsfsHudSender.Tests" />
+  </ItemGroup>
+
   <ItemGroup Condition="'$(HasSimConnect)' == 'true'">
     <Reference Include="Microsoft.FlightSimulator.SimConnect">
       <HintPath>$(SimConnectManagedDll)</HintPath>
@@ -33,9 +39,9 @@
           Condition="Exists('$(SimConnectNativeDll)')" />
   </ItemGroup>
 
-  <Target Name="WarnWithoutSimConnect" BeforeTargets="Build"
-          Condition="'$(HasSimConnect)' != 'true' And $([MSBuild]::IsOSPlatform('Windows'))">
-    <Warning Text="MSFS SDK not found (MSFS_SDK='$(MSFS_SDK)'). Building WITHOUT SimConnect: this sender cannot connect to the simulator." />
+  <Target Name="FailWithoutSdk" BeforeTargets="Build"
+          Condition="'$(UseSdkSimConnect)' == 'true' And '$(HasSimConnect)' != 'true'">
+    <Error Text="UseSdkSimConnect=true but the MSFS SDK was not found (MSFS_SDK='$(MSFS_SDK)')." />
   </Target>
 
 </Project>

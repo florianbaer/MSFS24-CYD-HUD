@@ -2,25 +2,25 @@
 
 A flight data HUD for the **ESP32-2432S024C** (Cheap Yellow Display), built with LVGL. A small Windows companion app reads telemetry from Microsoft Flight Simulator 2024 via SimConnect and streams it to the display as binary frames over USB serial or WiFi (UDP).
 
-Tap the touchscreen to cycle through the 7 screens.
+Swipe left or right (or press the **BOOT** button) to change screens; the dots in the top-right corner show where you are. Taps are free for controls: the autopilot screen works like a small autopilot panel.
 
 ## Screens
 
 <table>
   <tr>
     <td align="center"><img src="docs/images/gyro.png" width="270" alt="Gyroscope screen"><br><b>Gyroscope</b><br>Artificial horizon, pitch ladder, heading</td>
-    <td align="center"><img src="docs/images/engine.png" width="270" alt="Engine gauges screen"><br><b>Engine</b><br>RPM, throttle, oil temp/pressure, fuel flow</td>
+    <td align="center"><img src="docs/images/engine.png" width="270" alt="Engine gauges screen"><br><b>Engine</b><br>RPM with caution/limit bands, throttle, oil, fuel flow</td>
     <td align="center"><img src="docs/images/flight-data.png" width="270" alt="Flight data screen"><br><b>Flight Data</b><br>Airspeed, altitude, vertical speed, ground speed</td>
   </tr>
   <tr>
     <td align="center"><img src="docs/images/g-force.png" width="270" alt="G-force screen"><br><b>G-Force</b><br>Vertical / lateral / longitudinal G, peaks</td>
-    <td align="center"><img src="docs/images/nav.png" width="270" alt="Navigation screen"><br><b>Navigation</b><br>Position, heading bug, next waypoint</td>
+    <td align="center"><img src="docs/images/nav.png" width="270" alt="Navigation screen"><br><b>Navigation</b><br>Compass card, heading bug, waypoint bearing pointer</td>
     <td align="center"><img src="docs/images/config.png" width="270" alt="Aircraft configuration screen"><br><b>Config</b><br>Flaps, gear, elevator and rudder trim</td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Master, mode annunciators, targets</td>
+    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Tap modes to engage, ± for heading and altitude</td>
+    <td align="center"><img src="docs/images/ecam.png" width="270" alt="ECAM screen"><br><b>ECAM</b><br>Airbus-style N1/EGT/N2/FF, fuel, flaps, warnings and memos</td>
     <td align="center"><img src="docs/images/alert.png" width="270" alt="Stall alert overlay"><br><b>Alerts</b><br>Blinking overlay on every screen, plus the red LED</td>
-    <td></td>
   </tr>
 </table>
 
@@ -37,7 +37,32 @@ Alerts (engine fire, stall, overspeed, gear unsafe) are shown by priority. The d
 
 ## Quick Start
 
-### 1. Flash the display
+### Windows installer (recommended)
+
+Plug the display into the PC that runs MSFS 2024 and run **`MsfsCydHud-Setup.exe`** from the [latest release](https://github.com/florianbaer/msfs24-cyd-hud/releases/latest). Or paste this into PowerShell, which downloads and starts it:
+
+```powershell
+irm https://raw.githubusercontent.com/florianbaer/msfs24-cyd-hud/main/installer/bootstrap.ps1 | iex
+```
+
+Setup installs per user, without admin rights, and then runs the guided setup:
+
+1. **Finds the display** on USB by its USB chip (CH340 / CH9102 / CP210x) and points you to the driver if Windows has none.
+2. **USB or WiFi**: for WiFi it asks for the network and password.
+3. **Flashes the firmware** that comes ready-made in Setup.exe (with esptool, ~30 s; skipped when the display already runs this version) and sends the WiFi settings to the display over USB. The display keeps them in its flash, so switching between USB and WiFi never needs a re-flash. For WiFi it waits for the display to join and reads its IP address.
+4. **Installs the sender**, which comes ready-built in Setup.exe. No MSFS SDK, no .NET SDK: the sender has its own SimConnect client (see [below](#no-msfs-sdk-needed)).
+5. **Tests the display** with a 15-second synthetic flight.
+6. **Starts the HUD with MSFS** via `exe.xml` (Steam and Microsoft Store, with a backup of the file) and adds Start-menu shortcuts.
+
+*Set up or reconfigure MSFS CYD HUD* in the Start menu runs the guided setup again — to switch between USB and WiFi, change the network, or update the sender; your previous answers are the defaults. Uninstall from *Settings › Apps*. A full log is written to `%LOCALAPPDATA%\MsfsCydHud\install.log`.
+
+For USB the sender is registered with the target `auto`: it finds the display by its USB chip, so a different COM number after re-plugging does not break anything.
+
+From a clone of the repository, **`Install.cmd`** runs the same guided setup; without a ready-made image it builds the firmware with a private Arduino toolchain under `%LOCALAPPDATA%\MsfsCydHud` (your own Arduino IDE setup stays untouched). `installer/make_setup.ps1` builds Setup.exe on Windows (needs Inno Setup). CI has a job for it (`setup` in `.github/workflows/ci.yml`) that is switched off for now; remove its `if: ${{ false }}` line to build Setup.exe on every run and publish it on `v*` tags.
+
+### Manual setup
+
+#### 1. Flash the display
 
 See [docs/SETUP.md](docs/SETUP.md) for Arduino IDE and PlatformIO instructions. With PlatformIO it is:
 
@@ -45,19 +70,56 @@ See [docs/SETUP.md](docs/SETUP.md) for Arduino IDE and PlatformIO instructions. 
 pio run -t upload
 ```
 
-### 2. Run the sender (Windows, next to MSFS 2024)
+#### 2. Run the sender (Windows, next to MSFS 2024)
 
-The sender needs the SimConnect libraries from the MSFS 2024 SDK, so it is built from source on a machine that has the SDK installed. See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for details.
+Use `msfs-hud-sender.exe` from Setup.exe or the CI artifacts, or run it from source with the .NET 10 SDK (no MSFS SDK needed). See [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md) for details.
 
 ```sh
-set MSFS_SDK=C:\MSFS 2024 SDK
 cd msfs-sender
-dotnet run --project MsfsHudSender -- COM6               # USB serial, 20 Hz
+dotnet run --project MsfsHudSender                      # USB, finds the display by itself
+dotnet run --project MsfsHudSender -- COM6               # USB serial on a fixed port, 20 Hz
 dotnet run --project MsfsHudSender -- COM6 --hz 30       # faster updates
 dotnet run --project MsfsHudSender -- 192.168.1.50 --udp # WiFi
+dotnet run --project MsfsHudSender -- --demo             # display test without MSFS
 ```
 
 The sender waits until MSFS is running and exits when the simulator quits.
+
+## ECAM
+
+The ECAM screen is modelled on the Airbus upper ECAM (E/WD) for jets and turboprops: N1 and EGT dials with red limit zones and boxed readouts, N2 and fuel flow (kg/h) for engines 1 and 2, fuel on board, a slats/flaps indicator with the flaps detent, and the memo area — warnings on the left (red: engine fire, stall, overspeed; amber: gear not down, low fuel) and memos on the right (park brake, speed brake, ground spoilers armed, seat belts, APU available, engine anti-ice, landing lights). Piston aircraft have no N1/N2, so those stay at zero.
+
+## Touch controls
+
+| Where | Tap | Does |
+|---|---|---|
+| Any screen | swipe left / right, or the BOOT button | next / previous screen |
+| Autopilot | AP tile | autopilot master on/off |
+| Autopilot | HDG, ALT, VS, NAV, APR tiles | toggle that mode |
+| Autopilot | − / + next to the targets | heading bug ±1°, altitude ±1 step (hold to repeat) |
+| G-force | the peak values | reset the peaks |
+
+The display never changes an annunciator on its own: the tap goes to the sender, the sender fires the matching MSFS event (`AP_MASTER`, `AP_PANEL_HEADING_HOLD`, `HEADING_BUG_INC`, ... — see [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md#display-controls)), and the tile lights up when the simulator reports the new state, about 50 ms later. These are the standard MSFS events, which the default aircraft and most add-ons use; add-ons with their own autopilot logic (PMDG, Fenix and the like) may ignore them, in which case the tiles keep showing the correct state but the buttons do nothing. In `--demo` mode the controls change the demo flight's autopilot, so they can be tried without the simulator.
+
+## No MSFS SDK needed
+
+Most SimConnect apps use Microsoft's SimConnect DLLs, which come with the MSFS SDK and whose licence does not clearly allow shipping them. The sender instead speaks the SimConnect protocol itself ([`msfs-sender/MsfsHudSender/SimConnect/`](msfs-sender/MsfsHudSender/SimConnect)): it opens the same named pipe MSFS 2020 and 2024 offer every local client, and uses only the few calls it needs (open, data definitions, data requests). That is what lets CI build a finished exe and Setup.exe ship it.
+
+The packets are pinned by tests to the bytes of [node-simconnect](https://github.com/EvenAR/node-simconnect), an independent open-source client used with MSFS 2020 and 2024, and the whole sender is tested end to end against a fake simulator over both the named pipe and TCP. If a future MSFS update ever broke it, a build with `-p:UseSdkSimConnect=true` (MSFS SDK required) adds Microsoft's client back, selectable with `--sdk-simconnect`.
+
+## Display quality
+
+The ESP32 drives a 16-bit (RGB565) SPI panel, so the firmware works to make every frame count:
+
+- **Anti-aliased attitude indicator.** The horizon ball is rasterised per pixel with sub-pixel coverage on the horizon, the pitch ladder and the bezel — no stair-stepping when the aircraft banks. Bank scale, roll pointer, pitch numbers and the aircraft symbol are drawn with LVGL's anti-aliased primitives on top.
+- **Dithered gradients.** Sky and ground are lit gradients; a 4×4 ordered (Bayer) dither restores the in-between shades RGB565 cannot store, so there is no colour banding.
+- **Smooth motion.** Telemetry arrives at 20–30 Hz; the gyro eases toward each new sample ([`Smoothing.h`](lib/hud_widgets/Smoothing.h)) and redraws at up to ~40 fps, so the horizon glides instead of stepping. Heading takes the short way round through north.
+- **Gliding gauges on every screen.** Arcs and bars ease to each new value ([`Anim.h`](lib/hud_widgets/Anim.h)) instead of jumping, and the nav compass card turns smoothly with the aircraft heading.
+- **More instrument, less text.** The engine RPM arc carries caution and limit bands, the vertical-speed bar has a scale and a zero mark, and the nav screen has a compass card with the heading bug and a bearing pointer to the next waypoint.
+- **DMA double buffering.** LVGL renders into one buffer while the other streams to the panel over DMA, so drawing and the SPI transfer overlap. A self-test at boot and a bounded wait fall back to CPU transfers if DMA misbehaves or its memory is short; `-DHUD_USE_DMA=0` turns it off entirely. The serial log prints which mode is active.
+- **Only what changed.** LVGL redraws dirty areas at up to 60 Hz; static screens cost nothing, and the gyro is not redrawn while another screen is shown.
+
+The backlight is PWM-driven; lower `BACKLIGHT_BRIGHTNESS` in `ship_hud.ino` for night flying.
 
 ## Protocol
 
@@ -79,6 +141,9 @@ All multi-byte fields are little-endian.
 | `0x07` | NavData | 14 bytes: lat, lon (i32, degrees × 1e7), hdg_bug(i16), wp_dist(u16, tenths NM), wp_bearing(i16) |
 | `0x08` | Config | 4 bytes: flaps %(u8), gear_state(u8: 0 up, 1 transit, 2 down), elev_trim, rudder_trim (i8, -100..100) |
 | `0x09` | Autopilot | 8 bytes: mode_flags(u16), target_alt(i32, ft), target_hdg(i16, tenths of degrees) |
+| `0x0A` | ECAM engine | 9 bytes: engine_idx(u8), N1, N2 (u16, tenths of %), EGT(i16, °C), fuel flow(u16, kg/h) |
+| `0x0B` | ECAM status | 9 bytes: fuel on board(u32, kg), flaps detent, slats %, flaps % (u8), memo flags(u16) |
+| `0x20` | Command (display → PC) | 1 byte: control used on the display (1 AP master, 2 HDG, 3 ALT, 4 VS, 5 NAV, 6 APR, 7/8 heading bug +/−, 9/10 altitude +/−) |
 
 The protocol is implemented twice and pinned by tests on both sides using the same golden frames:
 
@@ -97,13 +162,19 @@ The protocol is implemented twice and pinned by tests on both sides using the sa
 ├── ship_hud/
 │   ├── ship_hud.ino            # ESP32 sketch (7-screen cycling)
 │   ├── *.h                     # Copies of lib/ (the Arduino IDE needs them here)
-│   └── wifi_config.h.example   # Copy to wifi_config.h to enable WiFi/UDP
+│   └── wifi_config.h.example   # Optional build-time WiFi default (normally set over USB)
 ├── msfs-sender/                # C# / .NET 10 sender
-│   ├── MsfsHudSender/          # SimConnect source, conversions, protocol, transports
+│   ├── MsfsHudSender/          # Built-in SimConnect client, conversions, protocol, transports
 │   └── MsfsHudSender.Tests/    # xUnit tests
-├── tests/proto/                # Host-side tests for the C++ decoder
+├── installer/                  # Guided setup (install.ps1), Setup.exe script (Inno Setup), web bootstrap
+├── Install.cmd                 # Double-click entry point for the installer
+├── tests/
+│   ├── proto/                  # Host-side tests for the C++ decoder
+│   ├── widgets/                # Host-side tests for widget helpers (smoothing)
+│   └── installer/              # Tests for the installer logic (PowerShell)
 ├── tools/
 │   ├── screenshots/            # Renders the screens to docs/images/*.png
+│   ├── qemu_smoke.py           # Boots the firmware in the ESP32 emulator with telemetry
 │   └── sync_headers.sh         # Copies lib/ into ship_hud/
 └── platformio.ini
 ```
@@ -116,6 +187,21 @@ dotnet test msfs-sender/
 
 # Firmware side of the protocol (any OS)
 c++ -std=c++17 -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test && ./decoder_test
+
+# USB configuration commands (WiFi settings over serial)
+c++ -std=c++17 -Ilib/hud_proto tests/proto/config_command_test.cpp -o config_command_test && ./config_command_test
+
+# Display-side easing
+c++ -std=c++17 -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_test && ./smoothing_test
+
+# Installer logic (settings, display detection, exe.xml) without hardware
+pwsh -NoProfile -File tests/installer/installer_test.ps1
+
+# Boot the real firmware in Espressif's ESP32 emulator and stream a demo flight
+# into it (needs qemu-system-xtensa from github.com/espressif/qemu; CI does this)
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs,FlashMode=dio \
+  --build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0" --build-path build ship_hud
+tools/qemu_smoke.py build/ship_hud.ino.merged.bin
 
 # After editing anything in lib/, refresh the copies in the sketch folder
 tools/sync_headers.sh

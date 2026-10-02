@@ -1,318 +1,269 @@
-#if SIMCONNECT
-using Microsoft.FlightSimulator.SimConnect;
-using System.Runtime.InteropServices;
-#endif
+using MsfsHudSender.SimConnect;
 
 namespace MsfsHudSender;
 
-/// <summary>Reads flight data from MSFS 2024 via SimConnect managed API.</summary>
-public sealed class MsfsSource : IDisposable
+/// <summary>
+/// Reads flight data from MSFS 2020/2024 with the built-in SimConnect client:
+/// no MSFS SDK and no Microsoft DLLs needed.
+/// </summary>
+public sealed class MsfsSource : IFlightSource
 {
-#if SIMCONNECT
-    private enum DataDef
+    /// <summary>Data definitions; each is requested with the same id.</summary>
+    internal enum Def : uint
     {
-        Attitude, Engine1, Engine2, Engine3, Engine4,
-        FlightData, GForce, Alerts, NavData, Config, Autopilot, AircraftInfo
+        Attitude = 1, Engine1, Engine2, Engine3, Engine4,
+        FlightData, GForce, Alerts, NavData, Config, Autopilot, AircraftInfo,
+        EcamEngine1, EcamEngine2, EcamStatus,
     }
 
-    private enum RequestId
+    private static (string Var, string Units)[] Engine(int n) =>
+    [
+        ($"GENERAL ENG RPM:{n}", "rpm"),
+        ($"GENERAL ENG THROTTLE LEVER POSITION:{n}", "percent"),
+        ($"ENG FUEL FLOW GPH:{n}", "gallons per hour"),
+        ($"GENERAL ENG OIL TEMPERATURE:{n}", "rankine"),
+        ($"GENERAL ENG OIL PRESSURE:{n}", "psf"),
+    ];
+
+    private static (string Var, string Units)[] EcamEngine(int n) =>
+    [
+        ($"TURB ENG N1:{n}", "percent"),
+        ($"TURB ENG N2:{n}", "percent"),
+        ($"ENG EXHAUST GAS TEMPERATURE:{n}", "celsius"),
+        ($"TURB ENG FUEL FLOW PPH:{n}", "pounds per hour"),
+    ];
+
+    /// <summary>Simulation variables per definition, in the order the values arrive.</summary>
+    internal static readonly IReadOnlyDictionary<Def, (string Var, string Units)[]> Definitions =
+        new Dictionary<Def, (string, string)[]>
+        {
+            [Def.Attitude] =
+            [
+                ("PLANE PITCH DEGREES", "radians"),
+                ("PLANE BANK DEGREES", "radians"),
+                ("PLANE HEADING DEGREES MAGNETIC", "radians"),
+            ],
+            [Def.Engine1] = Engine(1),
+            [Def.Engine2] = Engine(2),
+            [Def.Engine3] = Engine(3),
+            [Def.Engine4] = Engine(4),
+            [Def.FlightData] =
+            [
+                ("AIRSPEED INDICATED", "knots"),
+                ("INDICATED ALTITUDE", "feet"),
+                ("VERTICAL SPEED", "feet per minute"),
+                ("GROUND VELOCITY", "knots"),
+            ],
+            // Load factor for the vertical axis (1.0 in level flight), body
+            // accelerations for the other two (body X = lateral, body Z = longitudinal)
+            [Def.GForce] =
+            [
+                ("G FORCE", "GForce"),
+                ("ACCELERATION BODY X", "feet per second squared"),
+                ("ACCELERATION BODY Z", "feet per second squared"),
+            ],
+            [Def.Alerts] =
+            [
+                ("STALL WARNING", "bool"),
+                ("OVERSPEED WARNING", "bool"),
+                ("ENG ON FIRE:1", "bool"),
+            ],
+            [Def.NavData] =
+            [
+                ("PLANE LATITUDE", "radians"),
+                ("PLANE LONGITUDE", "radians"),
+                ("AUTOPILOT HEADING LOCK DIR", "degrees"),
+                ("GPS WP DISTANCE", "meters"),
+                ("GPS WP BEARING", "degrees"),
+            ],
+            [Def.Config] =
+            [
+                ("FLAPS HANDLE PERCENT", "percent"),
+                ("GEAR HANDLE POSITION", "bool"),
+                ("GEAR TOTAL PCT EXTENDED", "percent over 100"),
+                ("ELEVATOR TRIM POSITION", "radians"),
+                ("RUDDER TRIM PCT", "percent"),
+            ],
+            [Def.Autopilot] =
+            [
+                ("AUTOPILOT MASTER", "bool"),
+                ("AUTOPILOT HEADING LOCK", "bool"),
+                ("AUTOPILOT ALTITUDE LOCK", "bool"),
+                ("AUTOPILOT VERTICAL HOLD", "bool"),
+                ("AUTOPILOT NAV1 LOCK", "bool"),
+                ("AUTOPILOT APPROACH HOLD", "bool"),
+                ("AUTOPILOT ALTITUDE LOCK VAR", "feet"),
+                ("AUTOPILOT HEADING LOCK DIR", "degrees"),
+                ("AUTOPILOT AVAILABLE", "bool"),
+            ],
+            [Def.AircraftInfo] = [("NUMBER OF ENGINES", "number")],
+            // ECAM: kept in their own definitions so an aircraft that lacks one
+            // of these variables does not disturb the others
+            [Def.EcamEngine1] = EcamEngine(1),
+            [Def.EcamEngine2] = EcamEngine(2),
+            [Def.EcamStatus] =
+            [
+                ("FUEL TOTAL QUANTITY WEIGHT", "pounds"),
+                ("FLAPS HANDLE INDEX", "number"),
+                ("LEADING EDGE FLAPS LEFT PERCENT", "percent"),
+                ("TRAILING EDGE FLAPS LEFT PERCENT", "percent"),
+                ("BRAKE PARKING POSITION", "bool"),
+                ("SPOILERS HANDLE POSITION", "percent"),
+                ("SPOILERS ARMED", "bool"),
+                ("CABIN SEATBELTS ALERT SWITCH", "bool"),
+                ("APU PCT RPM", "percent"),
+                ("ENG ANTI ICE:1", "bool"),
+                ("LIGHT LANDING", "bool"),
+            ],
+        };
+
+    private readonly string? _host;
+    private readonly int _port;
+    private SimConnectClient? _sc;
+    // Latest values per definition; the receive thread swaps whole arrays
+    private readonly double[]?[] _latest = new double[]?[(int)Def.EcamStatus + 1];
+    private volatile bool _simQuit;
+
+    /// <param name="host">Remote simulator (SimConnect over TCP); null for the local one.</param>
+    public MsfsSource(string? host = null, int port = 0)
     {
-        Attitude, Engine1, Engine2, Engine3, Engine4,
-        FlightData, GForce, Alerts, NavData, Config, Autopilot, AircraftInfo
+        _host = host;
+        _port = port;
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct AttitudeData { public double pitch, roll, heading; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct EngineData { public double rpm, throttle, fuelFlow, oilTemp, oilPress; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct FlightDataStruct { public double ias, altitude, vspeed, gs; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct GForceData { public double gForce, accelBodyX, accelBodyZ; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct AlertData { public double stallWarning, overspeedWarning, engOnFire; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct NavDataStruct { public double lat, lon, hdgBug, wpDist, wpBearing; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct ConfigData { public double flaps, gearHandle, gearExtended, elevTrim, rudderTrim; }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct AutopilotData
-    {
-        public double master, hdgLock, altLock, vsLock, navLock, aprLock;
-        public double altVar, hdgDir, available;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
-    private struct AircraftInfoData { public double numEngines; }
-
-    private SimConnect? _sc;
-    private AttitudeData _attitude;
-    private EngineData[] _engines = new EngineData[4];
-    private FlightDataStruct _flight;
-    private GForceData _gforce;
-    private AlertData _alerts;
-    private NavDataStruct _nav;
-    private ConfigData _config;
-    private AutopilotData _ap;
-    private int _engineCount = 1;
-    private bool _apAvailable;
-    private bool _simQuit;
-
-    public static bool IsSupported => true;
-    public int EngineCount => _engineCount;
-    public bool AutopilotAvailable => _apAvailable;
-    /// <summary>True once MSFS has told us it is shutting down.</summary>
+    public int EngineCount => Math.Clamp((int)Value(Def.AircraftInfo, 0, 1), 1, 4);
+    public bool AutopilotAvailable => Value(Def.Autopilot, 8) > 0.5;
     public bool SimQuit => _simQuit;
+    /// <summary>Simulator version reported in the handshake, e.g. "KittyHawk".</summary>
+    public string? SimulatorName => _sc?.Server?.ApplicationName;
 
     public void Connect()
     {
-        _sc = new SimConnect("MsfsHudSender", IntPtr.Zero, 0, null, 0);
-        RegisterDataDefinitions();
-        _sc.OnRecvSimobjectData += OnRecvData;
-        _sc.OnRecvQuit += (_, _) => _simQuit = true;
-    }
-
-    private void RegisterDataDefinitions()
-    {
-        if (_sc == null) return;
-
-        // Attitude
-        _sc.AddToDataDefinition(DataDef.Attitude, "PLANE PITCH DEGREES", "radians",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Attitude, "PLANE BANK DEGREES", "radians",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Attitude, "PLANE HEADING DEGREES MAGNETIC", "radians",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<AttitudeData>(DataDef.Attitude);
-
-        // Engine (register for each engine index)
-        for (int i = 0; i < 4; i++)
+        var sc = SimConnectClient.Connect("MsfsHudSender", _host, _port);
+        sc.DataReceived += d =>
         {
-            var def = (DataDef)((int)DataDef.Engine1 + i);
-            var idx = i + 1;
-            _sc.AddToDataDefinition(def, $"GENERAL ENG RPM:{idx}", "rpm",
-                SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-            _sc.AddToDataDefinition(def, $"GENERAL ENG THROTTLE LEVER POSITION:{idx}", "percent",
-                SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-            _sc.AddToDataDefinition(def, $"ENG FUEL FLOW GPH:{idx}", "gallons per hour",
-                SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-            _sc.AddToDataDefinition(def, $"GENERAL ENG OIL TEMPERATURE:{idx}", "rankine",
-                SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-            _sc.AddToDataDefinition(def, $"GENERAL ENG OIL PRESSURE:{idx}", "psf",
-                SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-            _sc.RegisterDataDefineStruct<EngineData>(def);
-        }
-
-        // Flight data
-        _sc.AddToDataDefinition(DataDef.FlightData, "AIRSPEED INDICATED", "knots",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.FlightData, "INDICATED ALTITUDE", "feet",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.FlightData, "VERTICAL SPEED", "feet per minute",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.FlightData, "GROUND VELOCITY", "knots",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<FlightDataStruct>(DataDef.FlightData);
-
-        // G-force: load factor for the vertical axis (1.0 in level flight), body
-        // accelerations for the other two (body X = lateral, body Z = longitudinal)
-        _sc.AddToDataDefinition(DataDef.GForce, "G FORCE", "GForce",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.GForce, "ACCELERATION BODY X", "feet per second squared",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.GForce, "ACCELERATION BODY Z", "feet per second squared",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<GForceData>(DataDef.GForce);
-
-        // Alerts
-        _sc.AddToDataDefinition(DataDef.Alerts, "STALL WARNING", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Alerts, "OVERSPEED WARNING", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Alerts, "ENG ON FIRE:1", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<AlertData>(DataDef.Alerts);
-
-        // Nav data
-        _sc.AddToDataDefinition(DataDef.NavData, "PLANE LATITUDE", "radians",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.NavData, "PLANE LONGITUDE", "radians",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.NavData, "AUTOPILOT HEADING LOCK DIR", "degrees",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.NavData, "GPS WP DISTANCE", "meters",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.NavData, "GPS WP BEARING", "degrees",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<NavDataStruct>(DataDef.NavData);
-
-        // Config
-        _sc.AddToDataDefinition(DataDef.Config, "FLAPS HANDLE PERCENT", "percent",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Config, "GEAR HANDLE POSITION", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Config, "GEAR TOTAL PCT EXTENDED", "percent over 100",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Config, "ELEVATOR TRIM POSITION", "radians",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Config, "RUDDER TRIM PCT", "percent",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<ConfigData>(DataDef.Config);
-
-        // Autopilot
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT MASTER", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT HEADING LOCK", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT ALTITUDE LOCK", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT VERTICAL HOLD", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT NAV1 LOCK", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT APPROACH HOLD", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT ALTITUDE LOCK VAR", "feet",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT HEADING LOCK DIR", "degrees",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.AddToDataDefinition(DataDef.Autopilot, "AUTOPILOT AVAILABLE", "bool",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<AutopilotData>(DataDef.Autopilot);
-
-        // Aircraft info (engine count)
-        _sc.AddToDataDefinition(DataDef.AircraftInfo, "NUMBER OF ENGINES", "number",
-            SIMCONNECT_DATATYPE.FLOAT64, 0, SimConnect.SIMCONNECT_UNUSED);
-        _sc.RegisterDataDefineStruct<AircraftInfoData>(DataDef.AircraftInfo);
+            if (d.RequestId >= 1 && d.RequestId < _latest.Length) _latest[d.RequestId] = d.Values;
+        };
+        sc.ExceptionReceived += e =>
+            Console.Error.WriteLine($"SimConnect rejected request {e.SendId} (exception {e.Exception}, parameter {e.Index})");
+        sc.Closed += () => _simQuit = true;
+        foreach (var (def, vars) in Definitions)
+            foreach (var (name, units) in vars)
+                sc.AddToDataDefinition((uint)def, name, units);
+        // Client event id = command id
+        foreach (var (command, simEvent) in SimEvents.ForCommand)
+            sc.MapClientEventToSimEvent((uint)command, simEvent);
+        _sc = sc;
     }
 
     public void RequestData()
     {
-        if (_sc == null) return;
-        _sc.RequestDataOnSimObject(RequestId.Attitude, DataDef.Attitude,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        for (int i = 0; i < _engineCount; i++)
+        if (_sc is null || _simQuit) return;
+        try
         {
-            var req = (RequestId)((int)RequestId.Engine1 + i);
-            var def = (DataDef)((int)DataDef.Engine1 + i);
-            _sc.RequestDataOnSimObject(req, def,
-                SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
+            foreach (var def in Definitions.Keys)
+            {
+                bool unusedEngine = (def is >= Def.Engine1 and <= Def.Engine4 && def - Def.Engine1 >= EngineCount)
+                                || (def == Def.EcamEngine2 && EngineCount < 2);
+                if (!unusedEngine)
+                    _sc.RequestDataOnSimObject((uint)def, (uint)def, SimConnectProtocol.Period.Once);
+            }
         }
-        _sc.RequestDataOnSimObject(RequestId.FlightData, DataDef.FlightData,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.RequestDataOnSimObject(RequestId.GForce, DataDef.GForce,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.RequestDataOnSimObject(RequestId.Alerts, DataDef.Alerts,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.RequestDataOnSimObject(RequestId.NavData, DataDef.NavData,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.RequestDataOnSimObject(RequestId.Config, DataDef.Config,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.RequestDataOnSimObject(RequestId.Autopilot, DataDef.Autopilot,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.RequestDataOnSimObject(RequestId.AircraftInfo, DataDef.AircraftInfo,
-            SimConnect.SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD.ONCE, 0, 0, 0, 0);
-        _sc.ReceiveMessage();
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            // The simulator closed the connection (it may not have sent Quit first)
+            _simQuit = true;
+        }
     }
 
-    private void OnRecvData(SimConnect sender, SIMCONNECT_RECV_SIMOBJECT_DATA data)
+    public (ushort n1, ushort n2, short egt, ushort ff) ReadEcamEngine(int idx)
     {
-        switch ((RequestId)data.dwRequestID)
+        var v = Values(idx == 0 ? Def.EcamEngine1 : Def.EcamEngine2);
+        return Conversions.ConvertEcamEngine(v[0], v[1], v[2], v[3]);
+    }
+
+    public (uint fobKg, byte flapsIndex, byte slatsPct, byte flapsPct, ushort memo) ReadEcamStatus()
+    {
+        var v = Values(Def.EcamStatus);
+        var (fob, idx, slats, flaps) = Conversions.ConvertEcamStatus(v[0], v[1], v[2], v[3]);
+        var memo = Conversions.BuildMemoFlags(
+            parkBrake: v[4] > 0.5, speedBrake: v[5] > 1, spoilersArmed: v[6] > 0.5,
+            seatBelts: v[7] > 0.5, apuAvail: v[8] > 95, engAntiIce: v[9] > 0.5, landingLights: v[10] > 0.5);
+        return (fob, idx, slats, flaps, memo);
+    }
+
+    public void SendCommand(Protocol.HudCommand command)
+    {
+        if (_sc is null || _simQuit) return;
+        try
         {
-            case RequestId.Attitude:
-                _attitude = (AttitudeData)data.dwData[0]; break;
-            case RequestId.Engine1:
-                _engines[0] = (EngineData)data.dwData[0]; break;
-            case RequestId.Engine2:
-                _engines[1] = (EngineData)data.dwData[0]; break;
-            case RequestId.Engine3:
-                _engines[2] = (EngineData)data.dwData[0]; break;
-            case RequestId.Engine4:
-                _engines[3] = (EngineData)data.dwData[0]; break;
-            case RequestId.FlightData:
-                _flight = (FlightDataStruct)data.dwData[0]; break;
-            case RequestId.GForce:
-                _gforce = (GForceData)data.dwData[0]; break;
-            case RequestId.Alerts:
-                _alerts = (AlertData)data.dwData[0]; break;
-            case RequestId.NavData:
-                _nav = (NavDataStruct)data.dwData[0]; break;
-            case RequestId.Config:
-                _config = (ConfigData)data.dwData[0]; break;
-            case RequestId.Autopilot:
-                _ap = (AutopilotData)data.dwData[0];
-                _apAvailable = _ap.available > 0.5;
-                break;
-            case RequestId.AircraftInfo:
-                var info = (AircraftInfoData)data.dwData[0];
-                _engineCount = Math.Clamp((int)info.numEngines, 1, 4);
-                break;
+            _sc.TransmitClientEvent((uint)command);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
+            _simQuit = true;
         }
     }
 
-    public (short pitch, short roll, short heading) ReadAttitude() =>
-        Conversions.ConvertAttitude(_attitude.pitch, _attitude.roll, _attitude.heading);
+    private double Value(Def def, int index, double fallback = 0)
+    {
+        var values = _latest[(int)def];
+        return values is not null && index < values.Length ? values[index] : fallback;
+    }
 
-    public (ushort rpm, byte throttle, byte ff, byte ot, byte op) ReadEngine(int idx) =>
-        Conversions.ConvertEngine(
-            _engines[idx].rpm, _engines[idx].throttle, _engines[idx].fuelFlow,
-            _engines[idx].oilTemp, _engines[idx].oilPress);
+    private double[] Values(Def def) => _latest[(int)def] ?? new double[Definitions[def].Length];
 
-    public (ushort ias, int alt, short vs, ushort gs) ReadFlightData() =>
-        Conversions.ConvertFlightData(_flight.ias, _flight.altitude, _flight.vspeed, _flight.gs);
+    public (short pitch, short roll, short heading) ReadAttitude()
+    {
+        var v = Values(Def.Attitude);
+        return Conversions.ConvertAttitude(v[0], v[1], v[2]);
+    }
 
-    public (short gx, short gy, short gz) ReadGForce() =>
-        Conversions.ConvertGForce(_gforce.gForce, _gforce.accelBodyX, _gforce.accelBodyZ);
+    public (ushort rpm, byte throttle, byte ff, byte ot, byte op) ReadEngine(int idx)
+    {
+        var v = Values((Def)((uint)Def.Engine1 + (uint)idx));
+        return Conversions.ConvertEngine(v[0], v[1], v[2], v[3], v[4]);
+    }
+
+    public (ushort ias, int alt, short vs, ushort gs) ReadFlightData()
+    {
+        var v = Values(Def.FlightData);
+        return Conversions.ConvertFlightData(v[0], v[1], v[2], v[3]);
+    }
+
+    public (short gx, short gy, short gz) ReadGForce()
+    {
+        var v = Values(Def.GForce);
+        return Conversions.ConvertGForce(v[0], v[1], v[2]);
+    }
 
     public ushort ReadAlerts()
     {
-        bool gearUnsafe = _config.gearHandle > 0.5 && _config.gearExtended < 0.99;
-        return Conversions.BuildAlertFlags(
-            _alerts.stallWarning > 0.5, _alerts.overspeedWarning > 0.5,
-            gearUnsafe, false, _alerts.engOnFire > 0.5, false);
+        var a = Values(Def.Alerts);
+        var c = Values(Def.Config);
+        bool gearUnsafe = c[1] > 0.5 && c[2] < 0.99;
+        return Conversions.BuildAlertFlags(a[0] > 0.5, a[1] > 0.5, gearUnsafe, false, a[2] > 0.5, false);
     }
 
-    public (int lat, int lon, short bug, ushort dist, short brg) ReadNavData() =>
-        Conversions.ConvertNavData(_nav.lat, _nav.lon, _nav.hdgBug, _nav.wpDist, _nav.wpBearing);
+    public (int lat, int lon, short bug, ushort dist, short brg) ReadNavData()
+    {
+        var v = Values(Def.NavData);
+        return Conversions.ConvertNavData(v[0], v[1], v[2], v[3], v[4]);
+    }
 
-    public (byte flaps, byte gear, sbyte eTrim, sbyte rTrim) ReadConfig() =>
-        Conversions.ConvertConfig(
-            _config.flaps, _config.gearHandle, _config.gearExtended,
-            _config.elevTrim, _config.rudderTrim);
+    public (byte flaps, byte gear, sbyte eTrim, sbyte rTrim) ReadConfig()
+    {
+        var v = Values(Def.Config);
+        return Conversions.ConvertConfig(v[0], v[1], v[2], v[3], v[4]);
+    }
 
     public (ushort flags, int alt, short hdg) ReadAutopilot()
     {
-        var flags = Conversions.BuildApFlags(
-            _ap.master > 0.5, _ap.hdgLock > 0.5, _ap.altLock > 0.5,
-            _ap.vsLock > 0.5, _ap.navLock > 0.5, _ap.aprLock > 0.5);
-        var (alt, hdg) = Conversions.ConvertAutopilotTargets(_ap.altVar, _ap.hdgDir);
+        var v = Values(Def.Autopilot);
+        var flags = Conversions.BuildApFlags(v[0] > 0.5, v[1] > 0.5, v[2] > 0.5, v[3] > 0.5, v[4] > 0.5, v[5] > 0.5);
+        var (alt, hdg) = Conversions.ConvertAutopilotTargets(v[6], v[7]);
         return (flags, alt, hdg);
     }
 
     public void Dispose() => _sc?.Dispose();
-#else
-    public static bool IsSupported => false;
-    public int EngineCount => 1;
-    public bool AutopilotAvailable => false;
-    public bool SimQuit => false;
-    public void Connect() => throw new PlatformNotSupportedException(
-        "This build was compiled without the MSFS SDK. Rebuild on Windows with MSFS_SDK set.");
-    public void RequestData() { }
-    public (short, short, short) ReadAttitude() => default;
-    public (ushort, byte, byte, byte, byte) ReadEngine(int idx) => default;
-    public (ushort, int, short, ushort) ReadFlightData() => default;
-    public (short, short, short) ReadGForce() => default;
-    public ushort ReadAlerts() => 0;
-    public (int, int, short, ushort, short) ReadNavData() => default;
-    public (byte, byte, sbyte, sbyte) ReadConfig() => default;
-    public (ushort, int, short) ReadAutopilot() => default;
-    public void Dispose() { }
-#endif
 }

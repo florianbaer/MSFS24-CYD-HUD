@@ -1,10 +1,14 @@
 using System.IO.Ports;
-using System.Runtime.InteropServices;
 using MsfsHudSender;
 using MsfsHudSender.Protocol;
+using MsfsHudSender.SimConnect;
 
 // Parse CLI args
 bool udpMode = false;
+bool demo = false;
+bool sdkSimConnect = false;
+string? simHost = null;
+int simPort = 0;
 string target = "";
 int baud = 115200;
 int hz = 20;
@@ -25,6 +29,19 @@ for (int i = 0; i < args.Length; i++)
     switch (args[i])
     {
         case "--udp": udpMode = true; break;
+        case "--demo": demo = true; break;
+        case "--sdk-simconnect": sdkSimConnect = true; break;
+        case "--simconnect" when i + 1 < args.Length:
+        {
+            var parts = args[++i].Split(':');
+            if (parts.Length != 2 || !int.TryParse(parts[1], out simPort) || simPort is < 1 or > 65535)
+            {
+                Console.Error.WriteLine($"Error: --simconnect needs host:port, got '{args[i]}'");
+                return 1;
+            }
+            simHost = parts[0];
+            break;
+        }
         case "--baud" when i + 1 < args.Length:
             baud = ParseOption("baud rate", args[++i], 9600, 921600);
             break;
@@ -35,11 +52,14 @@ for (int i = 0; i < args.Length; i++)
             udpPort = ParseOption("port", args[++i], 1, 65535);
             break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: msfs-hud-sender <COM_PORT|HOST> [options]");
-            Console.WriteLine("  --udp          Use UDP transport instead of serial");
+            Console.WriteLine("Usage: msfs-hud-sender [COM_PORT|auto|HOST] [options]");
+            Console.WriteLine("  (no target)    Same as 'auto': find the display on USB by itself");
+            Console.WriteLine("  --udp          Use UDP transport instead of serial (target = display IP)");
+            Console.WriteLine("  --demo         Send a synthetic flight instead of MSFS data (display test)");
             Console.WriteLine("  --baud <rate>  Serial baud rate (default: 115200)");
             Console.WriteLine("  --hz <rate>    Send rate in Hz (default: 20)");
             Console.WriteLine("  --port <port>  UDP port (default: 4242)");
+            Console.WriteLine("  --simconnect <host:port>  MSFS on another PC (SimConnect over TCP, see SimConnect.xml)");
             return 0;
         default:
             if (args[i].StartsWith('-'))
@@ -55,36 +75,62 @@ for (int i = 0; i < args.Length; i++)
 
 if (string.IsNullOrEmpty(target))
 {
-    Console.Error.WriteLine("Error: specify serial port (e.g. COM6) or host IP (with --udp)");
-    Console.Error.WriteLine("Run with --help for usage.");
-    return 1;
+    if (udpMode)
+    {
+        Console.Error.WriteLine("Error: --udp needs the display's IP address or host name");
+        Console.Error.WriteLine("Run with --help for usage.");
+        return 1;
+    }
+    target = "auto";
 }
 
-if (!MsfsSource.IsSupported)
+#if !SIMCONNECT
+if (sdkSimConnect)
 {
-    Console.Error.WriteLine("This build was compiled without the MSFS SDK and cannot talk to the simulator.");
-    Console.Error.WriteLine("Rebuild on Windows with the MSFS_SDK environment variable set (see docs/MSFS_PLUGIN.md).");
+    Console.Error.WriteLine("Error: --sdk-simconnect needs a build with the MSFS SDK (-p:UseSdkSimConnect=true).");
     return 1;
+}
+#endif
+
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+
+// "auto": wait for a known USB-serial bridge (the display) to show up
+if (!udpMode && target.Equals("auto", StringComparison.OrdinalIgnoreCase))
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("Error: automatic port detection is Windows-only; pass the port name.");
+        return 1;
+    }
+    string? found;
+    bool announced = false;
+    while ((found = PortFinder.FindDisplayPort()) is null)
+    {
+        if (!announced)
+        {
+            Console.WriteLine("Waiting for the display to be plugged in (USB)... (Ctrl+C to stop)");
+            announced = true;
+        }
+        if (cts.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(2))) return 0;
+    }
+    target = found;
+    Console.WriteLine($"Found display on {target}");
 }
 
 // Set up transport
-Action<byte[]> write;
-IDisposable transport;
+ITransport transport;
 
 try
 {
     if (udpMode)
     {
-        var udp = new UdpTransport(target, udpPort);
-        write = udp.Write;
-        transport = udp;
+        transport = new UdpTransport(target, udpPort);
         Console.WriteLine($"Sending via UDP to {target}:{udpPort} at {hz}Hz");
     }
     else
     {
-        var serial = new SerialTransport(target, baud);
-        write = serial.Write;
-        transport = serial;
+        transport = new SerialTransport(target, baud);
         Console.WriteLine($"Sending via serial {target} at {baud} baud, {hz}Hz");
     }
 }
@@ -96,12 +142,56 @@ catch (Exception ex)
     return 1;
 }
 
-using var cts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+var interval = TimeSpan.FromMilliseconds(1000.0 / hz);
+void write(byte[] frame) => transport.Write(frame);
+
+// Controls used on the display (autopilot buttons) arrive as command frames
+var fromDisplay = new FrameReader();
+IEnumerable<HudCommand> ReceivedCommands()
+{
+    foreach (var frame in fromDisplay.Feed(transport.ReadAvailable()))
+        if (SimEvents.Parse(frame) is { } command)
+        {
+            Console.WriteLine($"Display: {command}");
+            yield return command;
+        }
+}
+
+if (demo)
+{
+    Console.WriteLine("Demo mode: sending a synthetic flight. Press Ctrl+C to stop");
+    var flight = new DemoFlight();
+    var clock = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        while (!cts.Token.IsCancellationRequested)
+        {
+            var start = clock.Elapsed;
+            foreach (var command in ReceivedCommands()) flight.Apply(command);
+            foreach (var frame in flight.Frames(start.TotalSeconds)) write(frame);
+            var delay = interval - (clock.Elapsed - start);
+            if (delay > TimeSpan.Zero) cts.Token.WaitHandle.WaitOne(delay);
+        }
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Error: {ex.Message}");
+        return 1;
+    }
+    finally
+    {
+        transport.Dispose();
+    }
+}
 
 // Connect to MSFS. The sender may be launched before the sim is ready
 // (e.g. from exe.xml), so keep trying until it answers.
-var source = new MsfsSource();
+#if SIMCONNECT
+IFlightSource source = sdkSimConnect ? new SdkMsfsSource() : new MsfsSource(simHost, simPort);
+#else
+IFlightSource source = new MsfsSource(simHost, simPort);
+#endif
 bool announcedWaiting = false;
 while (!cts.IsCancellationRequested)
 {
@@ -110,7 +200,7 @@ while (!cts.IsCancellationRequested)
         source.Connect();
         break;
     }
-    catch (COMException)
+    catch (SimConnectUnavailableException)
     {
         if (!announcedWaiting)
         {
@@ -134,10 +224,9 @@ if (cts.IsCancellationRequested)
 }
 
 Console.WriteLine("Connected to MSFS.");
-Console.WriteLine("Sending: attitude, engine, flight, g-force, alerts, nav, config, autopilot");
+Console.WriteLine("Sending: attitude, engine, flight, g-force, alerts, nav, config, autopilot, ECAM");
 Console.WriteLine("Press Ctrl+C to stop");
 
-var interval = TimeSpan.FromMilliseconds(1000.0 / hz);
 int exitCode = 0;
 
 try
@@ -146,6 +235,7 @@ try
     {
         var start = DateTime.UtcNow;
 
+        foreach (var command in ReceivedCommands()) source.SendCommand(command);
         source.RequestData();
         if (source.SimQuit)
         {
@@ -181,6 +271,14 @@ try
             var (apFlags, apAlt, apHdg) = source.ReadAutopilot();
             write(FrameBuilder.FrameAutopilot(apFlags, apAlt, apHdg));
         }
+
+        for (int i = 0; i < Math.Min(source.EngineCount, 2); i++)
+        {
+            var (n1, n2, egt, ff) = source.ReadEcamEngine(i);
+            write(FrameBuilder.FrameEcamEngine((byte)i, n1, n2, egt, ff));
+        }
+        var (fob, flapsIdx, slats, flapsPos, memo) = source.ReadEcamStatus();
+        write(FrameBuilder.FrameEcamStatus(fob, flapsIdx, slats, flapsPos, memo));
 
         var delay = interval - (DateTime.UtcNow - start);
         if (delay > TimeSpan.Zero)

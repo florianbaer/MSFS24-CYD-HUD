@@ -3,8 +3,10 @@ name: CI
 on:
   push:
     branches: [master, main]
+    tags: ['v*']
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
 
 jobs:
   firmware:
@@ -28,12 +30,36 @@ jobs:
           LIBS="$(arduino-cli config get directories.user)/libraries"
           cp config/lv_conf.h "$LIBS/lv_conf.h"
           cp config/User_Setup.h "$LIBS/TFT_eSPI/User_Setup.h"
-      - name: Compile (USB serial only)
-        run: arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
-      - name: Compile (with WiFi)
+      # The image Setup.exe ships and flashes (installer/make_setup.ps1)
+      - name: Build release firmware
+        run: arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs --build-path "$RUNNER_TEMP/release" ship_hud
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: ${{ runner.temp }}/release/ship_hud.ino.merged.bin
+          if-no-files-found: error
+      - name: Compile (USB only, default partition scheme)
+        run: arduino-cli compile --fqbn esp32:esp32:esp32 --build-property "compiler.cpp.extra_flags=-DHUD_WIFI=0" ship_hud
+      - name: Compile (WiFi from wifi_config.h)
         run: |
           cp ship_hud/wifi_config.h.example ship_hud/wifi_config.h
-          arduino-cli compile --fqbn esp32:esp32:esp32 ship_hud
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs ship_hud
+      # Boots the real firmware in Espressif's ESP32 emulator and streams a demo
+      # flight into its UART: checks boot, memory, display init and that the
+      # main loop decodes telemetry. No display in the emulator, and no SPI DMA:
+      # hence FlashMode=dio and HUD_USE_DMA=0 (see tools/qemu_smoke.py).
+      - name: Boot in the ESP32 emulator with telemetry (QEMU)
+        env:
+          QEMU_URL: https://github.com/espressif/qemu/releases/download/esp-develop-9.2.2-20260417/qemu-xtensa-softmmu-esp_develop_9.2.2_20260417-x86_64-linux-gnu.tar.xz
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libslirp0 libsdl2-2.0-0
+          curl -sSL "$QEMU_URL" | tar xJ -C "$RUNNER_TEMP"
+          rm -f ship_hud/wifi_config.h
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs,FlashMode=dio \
+            --build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0" \
+            --build-path "$RUNNER_TEMP/qemu-build" ship_hud
+          QEMU_XTENSA="$RUNNER_TEMP/qemu/bin/qemu-system-xtensa" \
+            python3 tools/qemu_smoke.py "$RUNNER_TEMP/qemu-build/ship_hud.ino.merged.bin" 45
 
   host-tests:
     name: Protocol decoder & widget rendering (host)
@@ -44,8 +70,16 @@ jobs:
         run: |
           c++ -std=c++17 -Wall -Wextra -Ilib/hud_proto tests/proto/decoder_test.cpp -o decoder_test
           ./decoder_test
+          c++ -std=c++17 -Wall -Wextra -Ilib/hud_proto tests/proto/config_command_test.cpp -o config_command_test
+          ./config_command_test
+      - name: Widget smoothing tests
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Ilib/hud_widgets tests/widgets/smoothing_test.cpp -o smoothing_test
+          ./smoothing_test
       - name: Render all screens
         run: make -C tools/screenshots -j4 OUT="$RUNNER_TEMP/screens"
+      - name: Touch controls (scripted taps and swipes through LVGL)
+        run: make -C tools/screenshots touch-test
 
   msfs-sender-test:
     name: Protocol & conversion tests
@@ -57,12 +91,10 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet test msfs-sender/ --verbosity normal
 
-  # Compile check only. SimConnect ships with the MSFS SDK, which is not available
-  # on the runner, so an exe built here cannot connect to the simulator and is
-  # deliberately not published as an artifact. Build a usable exe on a machine
-  # with the SDK installed (see docs/MSFS_PLUGIN.md).
+  # The sender has its own SimConnect client, so the exe built here is the real
+  # thing: no MSFS SDK involved. Setup.exe ships it.
   msfs-sender-build:
-    name: Build sender (Windows, without SimConnect)
+    name: Sender exe & installer tests (Windows)
     runs-on: windows-latest
     needs: msfs-sender-test
     steps:
@@ -70,9 +102,96 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+      - name: Installer scripts parse
+        shell: powershell
+        run: |
+          foreach ($f in 'installer/install.ps1', 'installer/bootstrap.ps1') {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { $errors | ForEach-Object { Write-Error "${f}: $_" }; exit 1 }
+          }
+      # Windows PowerShell 5.1 is what Install.cmd runs, so test with it
+      - name: Installer logic tests
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/installer/installer_test.ps1
+      # Includes the test over the real MSFS named pipe, which only runs on Windows
+      - name: Sender tests on Windows
+        run: dotnet test msfs-sender/ --verbosity normal
       - name: Publish single-file exe
         run: >
           dotnet publish msfs-sender/MsfsHudSender/MsfsHudSender.csproj
           -c Release -r win-x64 --self-contained
-          -p:PublishSingleFile=true
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none
           -o publish
+      - name: The exe starts
+        shell: powershell
+        run: |
+          & publish\msfs-hud-sender.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "msfs-hud-sender.exe --help exited with $LASTEXITCODE" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sender
+          path: publish/msfs-hud-sender.exe
+          if-no-files-found: error
+
+  # MsfsCydHud-Setup.exe: the firmware image, esptool, the guided setup and the
+  # ready-built sender in one per-user Windows installer. Downloadable from the
+  # run's artifacts; a v* tag also publishes it as a GitHub release.
+  setup:
+    name: Windows installer (Setup.exe)
+    # Disabled for now. To build Setup.exe in CI again (artifact on every run,
+    # GitHub release on v* tags), delete this line or set it to true.
+    if: ${{ false }}
+    runs-on: windows-latest
+    needs: [firmware, msfs-sender-build]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: fw
+      - uses: actions/download-artifact@v4
+        with:
+          name: sender
+          path: sender
+      - name: Build Setup.exe
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/make_setup.ps1 -Firmware fw/ship_hud.ino.merged.bin -Sender sender
+      - name: Install, check and uninstall silently
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\MSFS CYD HUD'
+          $p = Start-Process build\MsfsCydHud-Setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/CURRENTUSER' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Setup exited with $($p.ExitCode)" }
+          foreach ($f in 'installer\install.ps1', 'firmware\msfs-cyd-hud.bin', 'tools\esptool\esptool.exe',
+                         'sender\msfs-hud-sender.exe', 'ship_hud\ship_hud.ino', 'installed-by-setup.txt') {
+            if (-not (Test-Path (Join-Path $app $f))) { throw "missing after install: $f" }
+          }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'MSFS CYD HUD\Set up or reconfigure MSFS CYD HUD.lnk'
+          if (-not (Test-Path $lnk)) { throw 'Start-menu shortcut missing' }
+          & (Join-Path $app 'tools\esptool\esptool.exe') version
+          if ($LASTEXITCODE -ne 0) { throw 'bundled esptool does not run' }
+          & (Join-Path $app 'sender\msfs-hud-sender.exe') --help
+          if ($LASTEXITCODE -ne 0) { throw 'bundled sender does not run' }
+          $p = Start-Process (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall exited with $($p.ExitCode)" }
+          Start-Sleep -Seconds 5
+          if (Test-Path (Join-Path $app 'installer')) { throw 'files left after uninstall' }
+          Write-Host 'Setup.exe installs and uninstalls cleanly'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MsfsCydHud-Setup
+          path: build/MsfsCydHud-Setup.exe
+          if-no-files-found: error
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp fw/ship_hud.ino.merged.bin msfs-cyd-hud-firmware.bin
+          gh release create "$GITHUB_REF_NAME" build/MsfsCydHud-Setup.exe msfs-cyd-hud-firmware.bin \
+            --title "MSFS CYD HUD $GITHUB_REF_NAME" --generate-notes
