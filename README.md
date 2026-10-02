@@ -39,7 +39,7 @@ Alerts (engine fire, stall, overspeed, gear unsafe) are shown by priority. The d
 
 ### Windows installer (recommended)
 
-Plug the display into the PC that runs MSFS 2024 and run **`MsfsCydHud-Setup.exe`** — from the [latest release](https://github.com/florianbaer/msfs24-cyd-hud/releases/latest), or from the *Artifacts* of any CI run. Or paste this into PowerShell, which downloads and starts it:
+Plug the display into the PC that runs MSFS 2024 and run **`MsfsCydHud-Setup.exe`** from the [latest release](https://github.com/florianbaer/msfs24-cyd-hud/releases/latest). Or paste this into PowerShell, which downloads and starts it:
 
 ```powershell
 irm https://raw.githubusercontent.com/florianbaer/msfs24-cyd-hud/main/installer/bootstrap.ps1 | iex
@@ -58,7 +58,7 @@ Setup installs per user, without admin rights, and then runs the guided setup:
 
 For USB the sender is registered with the target `auto`: it finds the display by its USB chip, so a different COM number after re-plugging does not break anything.
 
-From a clone of the repository, **`Install.cmd`** runs the same guided setup; without a ready-made image it builds the firmware with a private Arduino toolchain under `%LOCALAPPDATA%\MsfsCydHud` (your own Arduino IDE setup stays untouched). `installer/make_setup.ps1` builds Setup.exe on Windows (needs Inno Setup; CI does this).
+From a clone of the repository, **`Install.cmd`** runs the same guided setup; without a ready-made image it builds the firmware with a private Arduino toolchain under `%LOCALAPPDATA%\MsfsCydHud` (your own Arduino IDE setup stays untouched). `installer/make_setup.ps1` builds Setup.exe on Windows (needs Inno Setup). CI has a job for it (`setup` in `.github/workflows/ci.yml`) that is switched off for now; remove its `if: ${{ false }}` line to build Setup.exe on every run and publish it on `v*` tags.
 
 ### Manual setup
 

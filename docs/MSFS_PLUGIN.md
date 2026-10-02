@@ -7,7 +7,7 @@ A companion app that reads flight data from Microsoft Flight Simulator 2020/2024
 ## Requirements
 
 - **Windows 10/11** with MSFS 2024 (or 2020)
-- Nothing else for the ready-built `msfs-hud-sender.exe` (from Setup.exe or the CI artifacts)
+- Nothing else for the ready-built `msfs-hud-sender.exe` (from Setup.exe, or the `sender` artifact of a CI run)
 - **.NET 10 SDK** only to build it yourself
 
 The MSFS SDK is **not** needed: the sender has its own SimConnect client instead of Microsoft's DLLs. It talks to the simulator over the named pipe `\\.\pipe\Microsoft Flight Simulator\SimConnect` that MSFS opens for local clients (falling back to the TCP port MSFS registers), or over TCP to another PC with `--simconnect`.

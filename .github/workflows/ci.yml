@@ -133,10 +133,13 @@ jobs:
           if-no-files-found: error
 
   # MsfsCydHud-Setup.exe: the firmware image, esptool, the guided setup and the
-  # sender sources in one per-user Windows installer. Downloadable from the run's
-  # artifacts; a v* tag also publishes it as a GitHub release.
+  # ready-built sender in one per-user Windows installer. Downloadable from the
+  # run's artifacts; a v* tag also publishes it as a GitHub release.
   setup:
     name: Windows installer (Setup.exe)
+    # Disabled for now. To build Setup.exe in CI again (artifact on every run,
+    # GitHub release on v* tags), delete this line or set it to true.
+    if: ${{ false }}
     runs-on: windows-latest
     needs: [firmware, msfs-sender-build]
     permissions:
