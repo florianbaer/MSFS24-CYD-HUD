@@ -10,6 +10,8 @@ enum MsgType : uint8_t {
   MSG_NAV_DATA    = 0x07,
   MSG_CONFIG      = 0x08,
   MSG_AUTOPILOT   = 0x09,
+  MSG_ECAM_ENGINE = 0x0A,
+  MSG_ECAM_STATUS = 0x0B,
   MSG_COMMAND     = 0x20,  // ESP32 -> PC: a control on the display was used
 };
 
@@ -94,4 +96,33 @@ struct __attribute__((packed)) AutopilotMsg {
   uint16_t mode_flags;
   int32_t  target_alt;  // feet
   int16_t  target_hdg;  // tenths of degrees
+};
+
+/// Turbine engine payload for the ECAM screen (PC -> ESP32), one per engine.
+struct __attribute__((packed)) EcamEngineMsg {
+  uint8_t  engine_idx;  // 0-based
+  uint16_t n1;          // tenths of %
+  uint16_t n2;          // tenths of %
+  int16_t  egt;         // degrees C
+  uint16_t fuel_flow;   // kg/h
+};
+
+/// ECAM memo flags (EcamStatusMsg.memo_flags)
+enum EcamMemo : uint16_t {
+  MEMO_PARK_BRK     = 1 << 0,
+  MEMO_SPEED_BRK    = 1 << 1,  // speed brakes extended
+  MEMO_SPLRS_ARMED  = 1 << 2,  // ground spoilers armed
+  MEMO_SEAT_BELTS   = 1 << 3,
+  MEMO_APU_AVAIL    = 1 << 4,
+  MEMO_ENG_ANTI_ICE = 1 << 5,
+  MEMO_LDG_LT       = 1 << 6,
+};
+
+/// Aircraft status for the ECAM screen (PC -> ESP32).
+struct __attribute__((packed)) EcamStatusMsg {
+  uint32_t fob;          // fuel on board, kg
+  uint8_t  flaps_index;  // flaps handle detent, 0 = up
+  uint8_t  slats_pct;    // leading-edge position 0..100
+  uint8_t  flaps_pct;    // trailing-edge position 0..100
+  uint16_t memo_flags;   // EcamMemo bits
 };

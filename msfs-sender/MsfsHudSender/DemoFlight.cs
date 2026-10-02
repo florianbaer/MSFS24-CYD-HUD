@@ -65,6 +65,14 @@ public sealed class DemoFlight
                 (short)(_apHeading * 10), (ushort)Math.Max(0, 240 - t * 0.5), Tenths(Mod(headingDeg - 5, 360))),
             FrameBuilder.FrameConfig(10, 2, (sbyte)(pitchDeg * 2), 0),
             FrameBuilder.FrameAutopilot(_apFlags, _apAltitude, (short)(_apHeading * 10)),
+            // ECAM: a twin jet at climb power, slats out, burning fuel
+            FrameBuilder.FrameEcamEngine(0, (ushort)Tenths(82 + 4 * Math.Sin(t / 9)), (ushort)Tenths(93.5 + Math.Sin(t / 9)),
+                (short)(610 + 25 * Math.Sin(t / 9)), (ushort)(1150 + 60 * Math.Sin(t / 9))),
+            FrameBuilder.FrameEcamEngine(1, (ushort)Tenths(81.6 + 4 * Math.Sin(t / 9 + 0.2)), (ushort)Tenths(93.1 + Math.Sin(t / 9 + 0.2)),
+                (short)(622 + 25 * Math.Sin(t / 9 + 0.2)), (ushort)(1140 + 60 * Math.Sin(t / 9 + 0.2))),
+            FrameBuilder.FrameEcamStatus((uint)Math.Max(0, 6200 - t * 0.6), 1, 50, 0,
+                (ushort)(Messages.MemoSeatBelts | Messages.MemoLandingLights
+                         | (Mod(t, 60) is > 20 and < 26 ? Messages.MemoSpeedBrake : 0))),
         ];
     }
 

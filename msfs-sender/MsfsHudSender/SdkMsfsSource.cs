@@ -304,6 +304,10 @@ public sealed class SdkMsfsSource : IFlightSource
         return (flags, alt, hdg);
     }
 
+    // ECAM data is only read by the built-in SimConnect client
+    public (ushort n1, ushort n2, short egt, ushort ff) ReadEcamEngine(int idx) => default;
+    public (uint fobKg, byte flapsIndex, byte slatsPct, byte flapsPct, ushort memo) ReadEcamStatus() => default;
+
     private bool _warnedCommands;
 
     /// <summary>Display controls are only wired up for the built-in SimConnect client.</summary>

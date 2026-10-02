@@ -39,7 +39,8 @@ public class DemoFlightTests
         var types = frames.Select(f => Cobs.Decode(f[1..^1])[0]).ToArray();
         Assert.Equal(
             new[] { Messages.MsgAttitude, Messages.MsgEngine, Messages.MsgFlightData, Messages.MsgGForce,
-                    Messages.MsgAlerts, Messages.MsgNavData, Messages.MsgConfig, Messages.MsgAutopilot },
+                    Messages.MsgAlerts, Messages.MsgNavData, Messages.MsgConfig, Messages.MsgAutopilot,
+                    Messages.MsgEcamEngine, Messages.MsgEcamEngine, Messages.MsgEcamStatus },
             types);
     }
 

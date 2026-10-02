@@ -224,7 +224,7 @@ if (cts.IsCancellationRequested)
 }
 
 Console.WriteLine("Connected to MSFS.");
-Console.WriteLine("Sending: attitude, engine, flight, g-force, alerts, nav, config, autopilot");
+Console.WriteLine("Sending: attitude, engine, flight, g-force, alerts, nav, config, autopilot, ECAM");
 Console.WriteLine("Press Ctrl+C to stop");
 
 int exitCode = 0;
@@ -271,6 +271,14 @@ try
             var (apFlags, apAlt, apHdg) = source.ReadAutopilot();
             write(FrameBuilder.FrameAutopilot(apFlags, apAlt, apHdg));
         }
+
+        for (int i = 0; i < Math.Min(source.EngineCount, 2); i++)
+        {
+            var (n1, n2, egt, ff) = source.ReadEcamEngine(i);
+            write(FrameBuilder.FrameEcamEngine((byte)i, n1, n2, egt, ff));
+        }
+        var (fob, flapsIdx, slats, flapsPos, memo) = source.ReadEcamStatus();
+        write(FrameBuilder.FrameEcamStatus(fob, flapsIdx, slats, flapsPos, memo));
 
         var delay = interval - (DateTime.UtcNow - start);
         if (delay > TimeSpan.Zero)

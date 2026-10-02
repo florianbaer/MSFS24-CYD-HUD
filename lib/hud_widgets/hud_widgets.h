@@ -12,3 +12,4 @@
 #include "NavDisplay.h"
 #include "AircraftConfig.h"
 #include "AutopilotStatus.h"
+#include "EcamDisplay.h"

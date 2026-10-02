@@ -17,7 +17,7 @@ namespace detail {
 inline void arcExec(void* obj, int32_t v) { lv_arc_set_value((lv_obj_t*)obj, v); }
 inline void barExec(void* obj, int32_t v) { lv_bar_set_value((lv_obj_t*)obj, v, LV_ANIM_OFF); }
 
-inline void glide(lv_obj_t* obj, lv_anim_exec_xcb_t exec, int32_t from, int32_t to) {
+inline void glide(void* obj, lv_anim_exec_xcb_t exec, int32_t from, int32_t to) {
   if (!animate || from == to) {
     lv_anim_delete(obj, exec);
     exec(obj, to);
@@ -40,6 +40,11 @@ inline void arcTo(lv_obj_t* arc, int32_t value) {
 
 inline void barTo(lv_obj_t* bar, int32_t value) {
   detail::glide(bar, detail::barExec, lv_bar_get_value(bar), value);
+}
+
+/// Glides any value: `exec(var, v)` draws it, `from` is what is shown now.
+inline void valueTo(void* var, lv_anim_exec_xcb_t exec, int32_t from, int32_t to) {
+  detail::glide(var, exec, from, to);
 }
 
 }  // namespace hud

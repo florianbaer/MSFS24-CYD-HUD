@@ -96,6 +96,7 @@ static NavDisplay nav;
 static AircraftConfig config;
 static AutopilotStatus autopilot;
 static AlertIndicator alert;
+static EcamDisplay ecam;
 
 static PageIndicator pageDots;
 static std::string outDir = ".";
@@ -134,7 +135,7 @@ int main(int argc, char** argv) {
   lv_display_set_buffers(disp, drawBuf, NULL, sizeof(drawBuf), LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   // Screens: keep in sync with setup() in ship_hud/ship_hud.ino
-  lv_obj_t* screens[7];
+  lv_obj_t* screens[8];
   for (auto& s : screens) s = newScreen();
 
   GyroHorizonConfig gyroCfg;
@@ -148,11 +149,12 @@ int main(int argc, char** argv) {
   nav.create(screens[4]);
   config.create(screens[5]);
   autopilot.create(screens[6]);
+  ecam.create(screens[7]);
 
   AlertIndicatorConfig alertCfg;
   alertCfg.ledPin = -1;
   alert.create(lv_layer_top(), alertCfg);
-  pageDots.create(lv_layer_top(), 7);  // as in the sketch
+  pageDots.create(lv_layer_top(), 8);  // as in the sketch
 
   // Sample telemetry: a light single in a climbing left turn out of Zurich.
   // Values are in wire units, exactly as the sender would deliver them.
@@ -166,11 +168,16 @@ int main(int argc, char** argv) {
   nav.setValue(474502000, 85618000, 2700, 124, 2680);
   config.setValue(25, 2, 12, -4);
   autopilot.setValue(0x01 | 0x02 | 0x04, 6000, 2700);
+  // A twin jet climbing out: CONF 1, seat belts and landing lights on
+  ecam.setEngine(0, 824, 935, 615, 1152);
+  ecam.setEngine(1, 819, 931, 628, 1140);
+  ecam.setStatus(6240, 1, 50, 0, MEMO_SEAT_BELTS | MEMO_LDG_LT | MEMO_SPLRS_ARMED);
+  ecam.setAlerts(0);
 
-  static const char* NAMES[7] = {
-    "gyro", "engine", "flight-data", "g-force", "nav", "config", "autopilot",
+  static const char* NAMES[8] = {
+    "gyro", "engine", "flight-data", "g-force", "nav", "config", "autopilot", "ecam",
   };
-  for (int i = 0; i < 7; i++) shot(NAMES[i], screens[i], i);
+  for (int i = 0; i < 8; i++) shot(NAMES[i], screens[i], i);
 
   // Alert overlay: stall warning on top of the flight data screen
   alert.setFlags(0x0001);

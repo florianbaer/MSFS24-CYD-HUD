@@ -1,7 +1,7 @@
 // MSFS 2024 HUD Display for ESP32-2432S024C (Capacitive touch)
 // Receives COBS-framed binary telemetry via USB serial (or WiFi UDP)
 // Touch chip: CST816S on I2C
-// 7 screens: Gyro, Engine, Flight Data, G-Force, Nav, Config, Autopilot
+// 8 screens: Gyro, Engine, Flight Data, G-Force, Nav, Config, Autopilot, ECAM
 //
 // Builds with arduino-esp32 3.x (Arduino IDE / arduino-cli) and 2.x (PlatformIO).
 
@@ -165,7 +165,7 @@ bool touchRead(uint16_t *x, uint16_t *y) {
 // Swipe left/right on the display, or press the BOOT button (next screen).
 // Taps go to the controls on the screen (autopilot buttons, peak-G reset).
 
-static const int NUM_SCREENS = 7;
+static const int NUM_SCREENS = 8;
 lv_obj_t* screens[NUM_SCREENS] = {};
 int currentScreen = 0;
 int pendingScreenStep = 0;  // set by a swipe, applied in loop()
@@ -194,6 +194,7 @@ NavDisplay nav;
 AircraftConfig config;
 AutopilotStatus autopilot;
 AlertIndicator alert;
+EcamDisplay ecam;
 
 FrameDecoder decoder;
 
@@ -338,6 +339,7 @@ void handleAlerts(const uint8_t* payload, int len) {
   AlertsMsg msg;
   memcpy(&msg, payload, sizeof(AlertsMsg));
   alert.setFlags(msg.flags);
+  ecam.setAlerts(msg.flags);
 }
 
 void handleNavData(const uint8_t* payload, int len) {
@@ -361,6 +363,20 @@ void handleAutopilot(const uint8_t* payload, int len) {
   autopilot.setValue(msg.mode_flags, msg.target_alt, msg.target_hdg);
 }
 
+void handleEcamEngine(const uint8_t* payload, int len) {
+  if (len < (int)sizeof(EcamEngineMsg)) return;
+  EcamEngineMsg msg;
+  memcpy(&msg, payload, sizeof(msg));
+  ecam.setEngine(msg.engine_idx, msg.n1, msg.n2, msg.egt, msg.fuel_flow);
+}
+
+void handleEcamStatus(const uint8_t* payload, int len) {
+  if (len < (int)sizeof(EcamStatusMsg)) return;
+  EcamStatusMsg msg;
+  memcpy(&msg, payload, sizeof(msg));
+  ecam.setStatus(msg.fob, msg.flaps_index, msg.slats_pct, msg.flaps_pct, msg.memo_flags);
+}
+
 void processFrame() {
   uint8_t payload[64];
   int len = decoder.payload(payload, sizeof(payload));
@@ -376,6 +392,8 @@ void processFrame() {
     case MSG_NAV_DATA:    handleNavData(payload, len); break;
     case MSG_CONFIG:      handleConfig(payload, len); break;
     case MSG_AUTOPILOT:   handleAutopilot(payload, len); break;
+    case MSG_ECAM_ENGINE: handleEcamEngine(payload, len); break;
+    case MSG_ECAM_STATUS: handleEcamStatus(payload, len); break;
   }
   decoder.clear();
 }
@@ -482,6 +500,7 @@ void setup() {
   config.create(screens[5]);      // Screen 5: MSFS Aircraft Config
   autopilot.create(screens[6]);   // Screen 6: MSFS Autopilot
   autopilot.setCommandHandler(sendCommand);
+  ecam.create(screens[7]);        // Screen 7: ECAM (engines, fuel, flaps, memos)
 
   // ---- Alert overlay (on top of all screens) ----
   alert.create(lv_layer_top());

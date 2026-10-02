@@ -19,8 +19,8 @@ Swipe left or right (or press the **BOOT** button) to change screens; the dots i
   </tr>
   <tr>
     <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Tap modes to engage, ± for heading and altitude</td>
+    <td align="center"><img src="docs/images/ecam.png" width="270" alt="ECAM screen"><br><b>ECAM</b><br>Airbus-style N1/EGT/N2/FF, fuel, flaps, warnings and memos</td>
     <td align="center"><img src="docs/images/alert.png" width="270" alt="Stall alert overlay"><br><b>Alerts</b><br>Blinking overlay on every screen, plus the red LED</td>
-    <td></td>
   </tr>
 </table>
 
@@ -85,6 +85,10 @@ dotnet run --project MsfsHudSender -- --demo             # display test without 
 
 The sender waits until MSFS is running and exits when the simulator quits.
 
+## ECAM
+
+The ECAM screen is modelled on the Airbus upper ECAM (E/WD) for jets and turboprops: N1 and EGT dials with red limit zones and boxed readouts, N2 and fuel flow (kg/h) for engines 1 and 2, fuel on board, a slats/flaps indicator with the flaps detent, and the memo area — warnings on the left (red: engine fire, stall, overspeed; amber: gear not down, low fuel) and memos on the right (park brake, speed brake, ground spoilers armed, seat belts, APU available, engine anti-ice, landing lights). Piston aircraft have no N1/N2, so those stay at zero.
+
 ## Touch controls
 
 | Where | Tap | Does |
@@ -137,6 +141,8 @@ All multi-byte fields are little-endian.
 | `0x07` | NavData | 14 bytes: lat, lon (i32, degrees × 1e7), hdg_bug(i16), wp_dist(u16, tenths NM), wp_bearing(i16) |
 | `0x08` | Config | 4 bytes: flaps %(u8), gear_state(u8: 0 up, 1 transit, 2 down), elev_trim, rudder_trim (i8, -100..100) |
 | `0x09` | Autopilot | 8 bytes: mode_flags(u16), target_alt(i32, ft), target_hdg(i16, tenths of degrees) |
+| `0x0A` | ECAM engine | 9 bytes: engine_idx(u8), N1, N2 (u16, tenths of %), EGT(i16, °C), fuel flow(u16, kg/h) |
+| `0x0B` | ECAM status | 9 bytes: fuel on board(u32, kg), flaps detent, slats %, flaps % (u8), memo flags(u16) |
 | `0x20` | Command (display → PC) | 1 byte: control used on the display (1 AP master, 2 HDG, 3 ALT, 4 VS, 5 NAV, 6 APR, 7/8 heading bug +/−, 9/10 altitude +/−) |
 
 The protocol is implemented twice and pinned by tests on both sides using the same golden frames:

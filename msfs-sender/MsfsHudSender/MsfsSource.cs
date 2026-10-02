@@ -13,6 +13,7 @@ public sealed class MsfsSource : IFlightSource
     {
         Attitude = 1, Engine1, Engine2, Engine3, Engine4,
         FlightData, GForce, Alerts, NavData, Config, Autopilot, AircraftInfo,
+        EcamEngine1, EcamEngine2, EcamStatus,
     }
 
     private static (string Var, string Units)[] Engine(int n) =>
@@ -22,6 +23,14 @@ public sealed class MsfsSource : IFlightSource
         ($"ENG FUEL FLOW GPH:{n}", "gallons per hour"),
         ($"GENERAL ENG OIL TEMPERATURE:{n}", "rankine"),
         ($"GENERAL ENG OIL PRESSURE:{n}", "psf"),
+    ];
+
+    private static (string Var, string Units)[] EcamEngine(int n) =>
+    [
+        ($"TURB ENG N1:{n}", "percent"),
+        ($"TURB ENG N2:{n}", "percent"),
+        ($"ENG EXHAUST GAS TEMPERATURE:{n}", "celsius"),
+        ($"TURB ENG FUEL FLOW PPH:{n}", "pounds per hour"),
     ];
 
     /// <summary>Simulation variables per definition, in the order the values arrive.</summary>
@@ -88,13 +97,31 @@ public sealed class MsfsSource : IFlightSource
                 ("AUTOPILOT AVAILABLE", "bool"),
             ],
             [Def.AircraftInfo] = [("NUMBER OF ENGINES", "number")],
+            // ECAM: kept in their own definitions so an aircraft that lacks one
+            // of these variables does not disturb the others
+            [Def.EcamEngine1] = EcamEngine(1),
+            [Def.EcamEngine2] = EcamEngine(2),
+            [Def.EcamStatus] =
+            [
+                ("FUEL TOTAL QUANTITY WEIGHT", "pounds"),
+                ("FLAPS HANDLE INDEX", "number"),
+                ("LEADING EDGE FLAPS LEFT PERCENT", "percent"),
+                ("TRAILING EDGE FLAPS LEFT PERCENT", "percent"),
+                ("BRAKE PARKING POSITION", "bool"),
+                ("SPOILERS HANDLE POSITION", "percent"),
+                ("SPOILERS ARMED", "bool"),
+                ("CABIN SEATBELTS ALERT SWITCH", "bool"),
+                ("APU PCT RPM", "percent"),
+                ("ENG ANTI ICE:1", "bool"),
+                ("LIGHT LANDING", "bool"),
+            ],
         };
 
     private readonly string? _host;
     private readonly int _port;
     private SimConnectClient? _sc;
     // Latest values per definition; the receive thread swaps whole arrays
-    private readonly double[]?[] _latest = new double[]?[(int)Def.AircraftInfo + 1];
+    private readonly double[]?[] _latest = new double[]?[(int)Def.EcamStatus + 1];
     private volatile bool _simQuit;
 
     /// <param name="host">Remote simulator (SimConnect over TCP); null for the local one.</param>
@@ -136,7 +163,8 @@ public sealed class MsfsSource : IFlightSource
         {
             foreach (var def in Definitions.Keys)
             {
-                bool unusedEngine = def is >= Def.Engine1 and <= Def.Engine4 && def - Def.Engine1 >= EngineCount;
+                bool unusedEngine = (def is >= Def.Engine1 and <= Def.Engine4 && def - Def.Engine1 >= EngineCount)
+                                || (def == Def.EcamEngine2 && EngineCount < 2);
                 if (!unusedEngine)
                     _sc.RequestDataOnSimObject((uint)def, (uint)def, SimConnectProtocol.Period.Once);
             }
@@ -146,6 +174,22 @@ public sealed class MsfsSource : IFlightSource
             // The simulator closed the connection (it may not have sent Quit first)
             _simQuit = true;
         }
+    }
+
+    public (ushort n1, ushort n2, short egt, ushort ff) ReadEcamEngine(int idx)
+    {
+        var v = Values(idx == 0 ? Def.EcamEngine1 : Def.EcamEngine2);
+        return Conversions.ConvertEcamEngine(v[0], v[1], v[2], v[3]);
+    }
+
+    public (uint fobKg, byte flapsIndex, byte slatsPct, byte flapsPct, ushort memo) ReadEcamStatus()
+    {
+        var v = Values(Def.EcamStatus);
+        var (fob, idx, slats, flaps) = Conversions.ConvertEcamStatus(v[0], v[1], v[2], v[3]);
+        var memo = Conversions.BuildMemoFlags(
+            parkBrake: v[4] > 0.5, speedBrake: v[5] > 1, spoilersArmed: v[6] > 0.5,
+            seatBelts: v[7] > 0.5, apuAvail: v[8] > 95, engAntiIce: v[9] > 0.5, landingLights: v[10] > 0.5);
+        return (fob, idx, slats, flaps, memo);
     }
 
     public void SendCommand(Protocol.HudCommand command)

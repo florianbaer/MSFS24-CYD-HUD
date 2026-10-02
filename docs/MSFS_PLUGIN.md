@@ -1,6 +1,6 @@
 # MSFS 2024 Flight Data Sender
 
-A companion app that reads flight data from Microsoft Flight Simulator 2020/2024 over SimConnect and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 7 HUD screens.
+A companion app that reads flight data from Microsoft Flight Simulator 2020/2024 over SimConnect and sends it to the ESP32 display over USB serial or WiFi UDP. Supports 8 HUD screens.
 
 > **Using the Windows installer?** `MsfsCydHud-Setup.exe` ships the sender ready-built, installs it to `%LOCALAPPDATA%\MsfsCydHud\app`, registers it in `exe.xml` and adds Start-menu shortcuts. This page covers doing it by hand.
 
@@ -91,7 +91,7 @@ Replace `C:\Your\Path\` with the actual folder where you saved the exe. `auto` f
 
 ## Display Screens
 
-The ESP32 display has 7 screens; swipe left/right or press the BOOT button to change them:
+The ESP32 display has 8 screens; swipe left/right or press the BOOT button to change them:
 
 | # | Screen | Data shown |
 |---|--------|------------|
@@ -101,7 +101,8 @@ The ESP32 display has 7 screens; swipe left/right or press the BOOT button to ch
 | 3 | **MSFS G-Force Meter** | Vertical/lateral/longitudinal G, peak tracking |
 | 4 | **MSFS Navigation** | Compass card with heading bug and waypoint bearing pointer, lat/lon, waypoint distance/bearing |
 | 5 | **MSFS Config** | Flaps, gear status, elevator/rudder trim |
-| 6 | **MSFS Autopilot** | AP master, mode annunciators, target alt/hdg |
+| 6 | **MSFS Autopilot** | AP master, mode annunciators, target alt/hdg — tap to engage, ± to adjust |
+| 7 | **ECAM** | Airbus-style N1/EGT dials, N2, fuel flow, fuel on board, slats/flaps, warnings and memos |
 
 All screens receive data simultaneously.
 
@@ -134,7 +135,7 @@ Alert warnings (stall, overspeed, gear unsafe, engine fire) overlay on all scree
 
 ## Protocol
 
-Eight message types are sent every cycle (Autopilot only for aircraft that have one; Engine once per engine, the display shows engine 1). Wire format: `[0x00] [COBS-encoded: msg_type | payload | CRC8] [0x00]`
+Ten message types are sent every cycle (Autopilot only for aircraft that have one; Engine once per engine, the display shows engine 1; ECAM engine for engines 1 and 2). The display sends command frames back when its controls are used. Wire format: `[0x00] [COBS-encoded: msg_type | payload | CRC8] [0x00]`
 
 | ID | Name | Payload | Size |
 |----|------|---------|------|
@@ -146,6 +147,9 @@ Eight message types are sent every cycle (Autopilot only for aircraft that have 
 | 0x07 | NavData | lat(i32), lon(i32), hdg_bug(i16), wp_dist(u16), wp_bearing(i16) | 14B |
 | 0x08 | Config | flaps_pct(u8), gear_state(u8), elev_trim(i8), rudder_trim(i8) | 4B |
 | 0x09 | Autopilot | mode_flags(u16), target_alt(i32), target_hdg(i16) | 8B |
+| 0x0A | ECAM engine | engine_idx(u8), n1(u16), n2(u16), egt(i16), fuel_flow(u16) | 9B |
+| 0x0B | ECAM status | fob_kg(u32), flaps_index(u8), slats_pct(u8), flaps_pct(u8), memo_flags(u16) | 9B |
+| 0x20 | Command (display → PC) | command(u8) | 1B |
 
 All multi-byte fields are little-endian.
 
@@ -164,7 +168,7 @@ All multi-byte fields are little-endian.
 -> The sender lists the ports it can see. Check the port name in Device Manager and close anything else that has the port open (Arduino serial monitor, `pio device monitor`).
 
 **No data on display**
--> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Swipe through all 7 screens. While telemetry arrives, the display's serial log prints `Telemetry: N frames in 10 s` (about 1600 at 20 Hz); if that line is missing, nothing valid is reaching it.
+-> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Swipe through all 8 screens. While telemetry arrives, the display's serial log prints `Telemetry: N frames in 10 s` (about 1600 at 20 Hz); if that line is missing, nothing valid is reaching it.
 
 **Display stays black, freezes, or shows garbage**
 -> Check the serial log at boot: `Display: DMA double-buffered` or `single buffer`, and the free heap. If DMA is the problem on your board, build with `-DHUD_USE_DMA=0` (PlatformIO: add it to `build_flags`; arduino-cli: `--build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0"`).

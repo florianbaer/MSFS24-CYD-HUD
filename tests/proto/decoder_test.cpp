@@ -30,6 +30,8 @@ static_assert(sizeof(AlertsMsg) == 2, "wire size");
 static_assert(sizeof(NavDataMsg) == 14, "wire size");
 static_assert(sizeof(ConfigMsg) == 4, "wire size");
 static_assert(sizeof(AutopilotMsg) == 8, "wire size");
+static_assert(sizeof(EcamEngineMsg) == 9, "wire size");
+static_assert(sizeof(EcamStatusMsg) == 9, "wire size");
 
 static std::vector<uint8_t> fromHex(const char* hex) {
   std::vector<uint8_t> out;
@@ -129,6 +131,26 @@ static void testGoldenGForce() {
   CHECK(msg.gforce_x == -15);
   CHECK(msg.gforce_y == 120);
   CHECK(msg.gforce_z == 5);
+}
+
+static void testGoldenEcam() {
+  FrameDecoder d;
+  uint8_t buf[64];
+  feedAll(d, fromHex("000c0a013803a70367028004a100"));
+  CHECK(d.available() && d.msgType() == MSG_ECAM_ENGINE);
+  CHECK(d.payload(buf, sizeof(buf)) == (int)sizeof(EcamEngineMsg));
+  EcamEngineMsg e;
+  memcpy(&e, buf, sizeof(e));
+  CHECK(e.engine_idx == 1 && e.n1 == 824 && e.n2 == 935 && e.egt == 615 && e.fuel_flow == 1152);
+  d.clear();
+
+  feedAll(d, fromHex("00040b60180105024b1e4902b300"));
+  CHECK(d.available() && d.msgType() == MSG_ECAM_STATUS);
+  CHECK(d.payload(buf, sizeof(buf)) == (int)sizeof(EcamStatusMsg));
+  EcamStatusMsg st;
+  memcpy(&st, buf, sizeof(st));
+  CHECK(st.fob == 6240 && st.flaps_index == 2 && st.slats_pct == 75 && st.flaps_pct == 30);
+  CHECK(st.memo_flags == (MEMO_PARK_BRK | MEMO_SEAT_BELTS | MEMO_LDG_LT));
 }
 
 static void testClearConsumesFrame() {
@@ -245,6 +267,7 @@ int main() {
   testGoldenAttitude();
   testGoldenFlightData();
   testGoldenGForce();
+  testGoldenEcam();
   testClearConsumesFrame();
   testCorruptedFrameRejected();
   testResyncAfterGarbage();

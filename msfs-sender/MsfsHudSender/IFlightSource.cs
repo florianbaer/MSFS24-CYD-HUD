@@ -21,6 +21,9 @@ public interface IFlightSource : IDisposable
     (int lat, int lon, short bug, ushort dist, short brg) ReadNavData();
     (byte flaps, byte gear, sbyte eTrim, sbyte rTrim) ReadConfig();
     (ushort flags, int alt, short hdg) ReadAutopilot();
+    /// <summary>Turbine values for the ECAM screen; zeros for piston engines.</summary>
+    (ushort n1, ushort n2, short egt, ushort ff) ReadEcamEngine(int idx);
+    (uint fobKg, byte flapsIndex, byte slatsPct, byte flapsPct, ushort memo) ReadEcamStatus();
 
     /// <summary>Triggers the simulator event for a control used on the display.</summary>
     void SendCommand(Protocol.HudCommand command);
