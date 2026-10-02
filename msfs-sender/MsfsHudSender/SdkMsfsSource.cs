@@ -304,6 +304,16 @@ public sealed class SdkMsfsSource : IFlightSource
         return (flags, alt, hdg);
     }
 
+    private bool _warnedCommands;
+
+    /// <summary>Display controls are only wired up for the built-in SimConnect client.</summary>
+    public void SendCommand(Protocol.HudCommand command)
+    {
+        if (_warnedCommands) return;
+        _warnedCommands = true;
+        Console.Error.WriteLine("Display controls are not supported with --sdk-simconnect; ignoring them.");
+    }
+
     public void Dispose() => _sc?.Dispose();
 }
 #endif

@@ -205,7 +205,42 @@ static void testOversizedFrameRejected() {
   CHECK(d.msgType() == MSG_GFORCE);
 }
 
+// Display -> PC command frames: the bytes the sender's FrameReader must accept
+// (msfs-sender/MsfsHudSender.Tests/CommandFrameTests.cs asserts the same bytes)
+static void commandFramesMatchGolden() {
+  struct { uint8_t cmd; uint8_t bytes[6]; } golden[] = {
+    {CMD_AP_MASTER, {0x00, 0x04, 0x20, 0x01, 0xed, 0x00}},
+    {CMD_AP_ALT,    {0x00, 0x04, 0x20, 0x03, 0x8f, 0x00}},
+    {CMD_ALT_DEC,   {0x00, 0x04, 0x20, 0x0a, 0x07, 0x00}},
+  };
+  for (auto& g : golden) {
+    CommandMsg msg{g.cmd};
+    uint8_t out[16];
+    size_t n = encodeFrame(MSG_COMMAND, (const uint8_t*)&msg, sizeof(msg), out, sizeof(out));
+    CHECK(n == 6);
+    CHECK(memcmp(out, g.bytes, 6) == 0);
+  }
+  // ... and they round-trip through the firmware's own decoder
+  FrameDecoder d;
+  CommandMsg msg{CMD_HDG_INC};
+  uint8_t out[16];
+  size_t n = encodeFrame(MSG_COMMAND, (const uint8_t*)&msg, sizeof(msg), out, sizeof(out));
+  int seen = 0;
+  for (size_t i = 0; i < n; i++) {
+    d.feed(out[i]);
+    if (d.available()) {
+      uint8_t p[4];
+      seen += d.msgType() == MSG_COMMAND && d.payload(p, sizeof(p)) == 1 && p[0] == CMD_HDG_INC;
+      d.clear();
+    }
+  }
+  CHECK(seen == 1);
+  // A buffer that is too small is refused
+  CHECK(encodeFrame(MSG_COMMAND, (const uint8_t*)&msg, sizeof(msg), out, 5) == 0);
+}
+
 int main() {
+  commandFramesMatchGolden();
   testCrc();
   testGoldenAttitude();
   testGoldenFlightData();

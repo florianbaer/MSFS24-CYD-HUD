@@ -21,4 +21,7 @@ public interface IFlightSource : IDisposable
     (int lat, int lon, short bug, ushort dist, short brg) ReadNavData();
     (byte flaps, byte gear, sbyte eTrim, sbyte rTrim) ReadConfig();
     (ushort flags, int alt, short hdg) ReadAutopilot();
+
+    /// <summary>Triggers the simulator event for a control used on the display.</summary>
+    void SendCommand(Protocol.HudCommand command);
 }

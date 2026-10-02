@@ -4,4 +4,5 @@
 #include "cobs.h"
 #include "crc8.h"
 #include "frame_decoder.h"
+#include "frame_encoder.h"
 #include "config_command.h"

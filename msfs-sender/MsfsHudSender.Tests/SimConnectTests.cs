@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO.Pipes;
 using System.Net;
 using System.Net.Sockets;
+using MsfsHudSender.Protocol;
 using MsfsHudSender.SimConnect;
 using static MsfsHudSender.SimConnect.SimConnectProtocol;
 
@@ -29,6 +30,13 @@ public class SimConnectProtocolTests
     public void RequestDataOnSimObjectMatchesNodeSimConnect() =>
         Assert.Equal(Hex(SimConnectGolden.Request),
             RequestDataOnSimObject(7, 1, ObjectIdUser, Period.Once, sendId: 3));
+
+    [Fact]
+    public void EventPacketsMatchNodeSimConnect()
+    {
+        Assert.Equal(Hex(SimConnectGolden.MapApMaster), MapClientEventToSimEvent(3, "AP_MASTER", sendId: 4));
+        Assert.Equal(Hex(SimConnectGolden.TransmitApMaster), TransmitClientEvent(ObjectIdUser, 3, 0, sendId: 5));
+    }
 
     [Fact]
     public void ParsesOpenLikeNodeSimConnect()
@@ -140,6 +148,18 @@ public sealed class MsfsSourceTests : IDisposable
     }
 
     [Fact]
+    public void DisplayControlsBecomeSimEvents()
+    {
+        using var source = new MsfsSource("127.0.0.1", _sim.Port);
+        source.Connect();
+        source.SendCommand(HudCommand.ApMaster);
+        source.SendCommand(HudCommand.HeadingBugInc);
+        Poll(source, () => { lock (_sim.Transmitted) return _sim.Transmitted.Count == 2; }, request: false);
+        lock (_sim.Transmitted)
+            Assert.Equal(["AP_MASTER", "HEADING_BUG_INC"], _sim.Transmitted);
+    }
+
+    [Fact]
     public void ReportsWhenTheSimulatorQuits()
     {
         using var source = new MsfsSource("127.0.0.1", _sim.Port);
@@ -188,6 +208,9 @@ public sealed class MsfsSourceTests : IDisposable
 
         public readonly Dictionary<uint, double[]> Values = [];
         public readonly HashSet<uint> Requested = [];
+        public readonly Dictionary<uint, string> MappedEvents = [];
+        /// <summary>Names of the simulator events fired, in order.</summary>
+        public readonly List<string> Transmitted = [];
         public string? ClientName;
         public int DefinedVariables;
         public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -238,6 +261,14 @@ public sealed class MsfsSourceTests : IDisposable
                             break;
                         case 0x0C:
                             Interlocked.Increment(ref DefinedVariables);
+                            break;
+                        case 0x04:
+                            MappedEvents[BinaryPrimitives.ReadUInt32LittleEndian(body)] =
+                                System.Text.Encoding.Latin1.GetString(body.Slice(4, 256)).TrimEnd('\0');
+                            break;
+                        case 0x05:
+                            var eventId = BinaryPrimitives.ReadUInt32LittleEndian(body[4..]);
+                            lock (Transmitted) Transmitted.Add(MappedEvents.GetValueOrDefault(eventId, $"unmapped {eventId}"));
                             break;
                         case 0x0E:
                             var req = BinaryPrimitives.ReadUInt32LittleEndian(body);

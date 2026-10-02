@@ -2,7 +2,7 @@
 
 A flight data HUD for the **ESP32-2432S024C** (Cheap Yellow Display), built with LVGL. A small Windows companion app reads telemetry from Microsoft Flight Simulator 2024 via SimConnect and streams it to the display as binary frames over USB serial or WiFi (UDP).
 
-Tap the touchscreen to cycle through the 7 screens.
+Swipe left or right (or press the **BOOT** button) to change screens; the dots in the top-right corner show where you are. Taps are free for controls: the autopilot screen works like a small autopilot panel.
 
 ## Screens
 
@@ -18,7 +18,7 @@ Tap the touchscreen to cycle through the 7 screens.
     <td align="center"><img src="docs/images/config.png" width="270" alt="Aircraft configuration screen"><br><b>Config</b><br>Flaps, gear, elevator and rudder trim</td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Lit mode annunciators, target altitude and heading</td>
+    <td align="center"><img src="docs/images/autopilot.png" width="270" alt="Autopilot screen"><br><b>Autopilot</b><br>Tap modes to engage, ± for heading and altitude</td>
     <td align="center"><img src="docs/images/alert.png" width="270" alt="Stall alert overlay"><br><b>Alerts</b><br>Blinking overlay on every screen, plus the red LED</td>
     <td></td>
   </tr>
@@ -85,6 +85,18 @@ dotnet run --project MsfsHudSender -- --demo             # display test without 
 
 The sender waits until MSFS is running and exits when the simulator quits.
 
+## Touch controls
+
+| Where | Tap | Does |
+|---|---|---|
+| Any screen | swipe left / right, or the BOOT button | next / previous screen |
+| Autopilot | AP tile | autopilot master on/off |
+| Autopilot | HDG, ALT, VS, NAV, APR tiles | toggle that mode |
+| Autopilot | − / + next to the targets | heading bug ±1°, altitude ±1 step (hold to repeat) |
+| G-force | the peak values | reset the peaks |
+
+The display never changes an annunciator on its own: the tap goes to the sender, the sender fires the matching MSFS event (`AP_MASTER`, `AP_PANEL_HEADING_HOLD`, `HEADING_BUG_INC`, ... — see [docs/MSFS_PLUGIN.md](docs/MSFS_PLUGIN.md#display-controls)), and the tile lights up when the simulator reports the new state, about 50 ms later. These are the standard MSFS events, which the default aircraft and most add-ons use; add-ons with their own autopilot logic (PMDG, Fenix and the like) may ignore them, in which case the tiles keep showing the correct state but the buttons do nothing. In `--demo` mode the controls change the demo flight's autopilot, so they can be tried without the simulator.
+
 ## No MSFS SDK needed
 
 Most SimConnect apps use Microsoft's SimConnect DLLs, which come with the MSFS SDK and whose licence does not clearly allow shipping them. The sender instead speaks the SimConnect protocol itself ([`msfs-sender/MsfsHudSender/SimConnect/`](msfs-sender/MsfsHudSender/SimConnect)): it opens the same named pipe MSFS 2020 and 2024 offer every local client, and uses only the few calls it needs (open, data definitions, data requests). That is what lets CI build a finished exe and Setup.exe ship it.
@@ -125,6 +137,7 @@ All multi-byte fields are little-endian.
 | `0x07` | NavData | 14 bytes: lat, lon (i32, degrees × 1e7), hdg_bug(i16), wp_dist(u16, tenths NM), wp_bearing(i16) |
 | `0x08` | Config | 4 bytes: flaps %(u8), gear_state(u8: 0 up, 1 transit, 2 down), elev_trim, rudder_trim (i8, -100..100) |
 | `0x09` | Autopilot | 8 bytes: mode_flags(u16), target_alt(i32, ft), target_hdg(i16, tenths of degrees) |
+| `0x20` | Command (display → PC) | 1 byte: control used on the display (1 AP master, 2 HDG, 3 ALT, 4 VS, 5 NAV, 6 APR, 7/8 heading bug +/−, 9/10 altitude +/−) |
 
 The protocol is implemented twice and pinned by tests on both sides using the same golden frames:
 

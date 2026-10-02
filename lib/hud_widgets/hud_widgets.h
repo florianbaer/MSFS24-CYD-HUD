@@ -3,6 +3,7 @@
 #include "ColorScale.h"
 #include "Smoothing.h"
 #include "Anim.h"
+#include "TouchInput.h"
 #include "GyroHorizon.h"
 #include "EngineGauges.h"
 #include "FlightData.h"

@@ -148,6 +148,12 @@ public sealed class SimConnectClient : IDisposable
         uint objectId = SimConnectProtocol.ObjectIdUser) =>
         Send(id => SimConnectProtocol.RequestDataOnSimObject(requestId, defineId, objectId, period, id));
 
+    public void MapClientEventToSimEvent(uint eventId, string eventName) =>
+        Send(id => SimConnectProtocol.MapClientEventToSimEvent(eventId, eventName, id));
+
+    public void TransmitClientEvent(uint eventId, uint data = 0, uint objectId = SimConnectProtocol.ObjectIdUser) =>
+        Send(id => SimConnectProtocol.TransmitClientEvent(objectId, eventId, data, id));
+
     private void Send(Func<uint, byte[]> build)
     {
         lock (_writeLock)

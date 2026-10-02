@@ -21,6 +21,9 @@ public static class FrameBuilder
         return frame;
     }
 
+    /// <summary>Command from the display (the display builds these; used by tests and tools).</summary>
+    public static byte[] FrameCommand(HudCommand command) => Frame(Messages.MsgCommand, [(byte)command]);
+
     /// <summary>Attitude: pitch/roll/heading in tenths of degrees (int16 LE).</summary>
     public static byte[] FrameAttitude(short pitch, short roll, short heading)
     {

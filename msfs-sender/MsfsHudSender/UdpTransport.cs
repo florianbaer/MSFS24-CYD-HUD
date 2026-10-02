@@ -3,7 +3,7 @@ using System.Net.Sockets;
 
 namespace MsfsHudSender;
 
-public sealed class UdpTransport : IDisposable
+public sealed class UdpTransport : ITransport
 {
     private readonly UdpClient _client;
     private readonly IPEndPoint _endpoint;
@@ -19,6 +19,26 @@ public sealed class UdpTransport : IDisposable
     }
 
     public void Write(byte[] data) => _client.Send(data, data.Length, _endpoint);
+
+    /// <summary>Command frames the display sends back to the port we send from.</summary>
+    public byte[] ReadAvailable()
+    {
+        var received = new List<byte>();
+        try
+        {
+            while (_client.Available > 0)
+            {
+                IPEndPoint? from = null;
+                var datagram = _client.Receive(ref from);
+                if (from.Address.Equals(_endpoint.Address)) received.AddRange(datagram);
+            }
+        }
+        catch (SocketException)
+        {
+            // e.g. "port unreachable" from an earlier send while the display was offline
+        }
+        return [.. received];
+    }
 
     public void Dispose() => _client.Dispose();
 }

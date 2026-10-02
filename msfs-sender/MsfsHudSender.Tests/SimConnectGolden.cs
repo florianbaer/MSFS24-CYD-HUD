@@ -4,8 +4,9 @@ namespace MsfsHudSender.Tests;
 /// SimConnect bytes captured from node-simconnect (github.com/EvenAR/node-simconnect,
 /// LGPL-3.0), an independent client used with MSFS 2020 and 2024, talking to a
 /// recording server. Regenerate with tests/simconnect/oracle.js.
-/// Client side: open("MsfsHudSender", FSX_SP2), two addToDataDefinition calls
-/// and one requestDataOnSimObject, with send ids 0..3.
+/// Client side: open("MsfsHudSender", FSX_SP2), two addToDataDefinition calls,
+/// one requestDataOnSimObject, mapClientEventToSimEvent(3, "AP_MASTER") and
+/// transmitClientEvent(user, 3, 0, priority HIGHEST, GROUPID_IS_PRIORITY), with send ids 0..5.
 /// Server side: the replies the recording server sent, which node-simconnect
 /// parsed as noted.
 /// </summary>
@@ -50,6 +51,17 @@ internal static class SimConnectGolden
 
     public const string Request =
         "30000000040000000e0000f0030000000700000001000000000000000100000000000000000000000000000000000000";
+
+    public const string MapApMaster =
+        "1401000004000000040000f0040000000300000041505f4d415354455200000000000000000000000000000000000000" +
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+        "000000000000000000000000000000000000000000000000000000000000000000000000";
+
+    public const string TransmitApMaster =
+        "2400000004000000050000f0050000000000000003000000000000000100000010000000";
 
     /// <summary>Parsed by node-simconnect as application "KittyHawk", SimConnect 11.0.</summary>
     public const string RecvOpen =

@@ -13,7 +13,7 @@
 #include "hud_widgets.h"
 #include "hud_proto.h"
 
-#define HUD_FW_VERSION "1.1.0"
+#define HUD_FW_VERSION "1.2.0"
 
 // WiFi/UDP support. The network is normally set by the installer over USB and
 // stored in flash (see config_command.h); a wifi_config.h next to the sketch
@@ -161,26 +161,28 @@ bool touchRead(uint16_t *x, uint16_t *y) {
   return true;
 }
 
-void my_touchpad_read(lv_indev_t * indev, lv_indev_data_t * data) {
-  uint16_t tx, ty;
-  if (touchRead(&tx, &ty)) {
-    // Panel is mounted in portrait; rotate into the landscape UI
-    data->point.x = ty;
-    data->point.y = TFT_VER_RES - 1 - tx;
-    data->state = LV_INDEV_STATE_PRESSED;
-  } else {
-    data->state = LV_INDEV_STATE_RELEASED;
-  }
-}
-
-// ---- Mode switching ----
+// ---- Screen navigation ----
+// Swipe left/right on the display, or press the BOOT button (next screen).
+// Taps go to the controls on the screen (autopilot buttons, peak-G reset).
 
 static const int NUM_SCREENS = 7;
 lv_obj_t* screens[NUM_SCREENS] = {};
 int currentScreen = 0;
-bool touchWasPressed = false;
-uint32_t lastToggleMs = 0;
-static const uint32_t DEBOUNCE_MS = 300;
+int pendingScreenStep = 0;  // set by a swipe, applied in loop()
+SwipeDetector swipe;
+PageIndicator pageDots;
+
+#define BOOT_BUTTON_PIN 0     // the "BOOT" button: free to use once the sketch runs
+bool bootWasDown = false;
+uint32_t bootChangedMs = 0;
+
+void my_touchpad_read(lv_indev_t * indev, lv_indev_data_t * data) {
+  uint16_t tx, ty;
+  bool pressed = touchRead(&tx, &ty);
+  // Panel is mounted in portrait; rotate into the landscape UI
+  int step = feedTouch(swipe, indev, data, pressed, ty, TFT_VER_RES - 1 - tx);
+  if (step != 0) pendingScreenStep = step;
+}
 
 // ---- MSFS widgets ----
 
@@ -378,11 +380,37 @@ void processFrame() {
   decoder.clear();
 }
 
-void toggleMode() {
-  currentScreen = (currentScreen + 1) % NUM_SCREENS;
-  if (screens[currentScreen]) {
-    lv_screen_load(screens[currentScreen]);
+void showScreen(int step) {
+  currentScreen = (currentScreen + step + NUM_SCREENS) % NUM_SCREENS;
+  // Slide in from the side the finger moved towards
+  lv_screen_load_anim(screens[currentScreen],
+                      step > 0 ? LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT,
+                      180, 0, false);
+  pageDots.set(currentScreen);
+}
+
+// ---- Commands to the PC (display controls) ----
+
+#ifdef WIFI_ENABLED
+IPAddress udpPeer;         // the sender's address, learned from its telemetry
+uint16_t udpPeerPort = 0;
+uint32_t udpPeerSeenMs = 0;
+#endif
+
+// Sent over USB and, while a WiFi sender is active, back to it over UDP
+void sendCommand(uint8_t command) {
+  CommandMsg msg{command};
+  uint8_t frame[8];
+  size_t n = encodeFrame(MSG_COMMAND, (const uint8_t*)&msg, sizeof(msg), frame, sizeof(frame));
+  if (n == 0) return;
+  Serial.write(frame, n);
+#ifdef WIFI_ENABLED
+  if (udpListening && udpPeerPort != 0 && millis() - udpPeerSeenMs < 5000) {
+    udp.beginPacket(udpPeer, udpPeerPort);
+    udp.write(frame, n);
+    udp.endPacket();
   }
+#endif
 }
 
 static lv_obj_t* newScreen() {
@@ -453,6 +481,7 @@ void setup() {
   nav.create(screens[4]);         // Screen 4: MSFS Navigation
   config.create(screens[5]);      // Screen 5: MSFS Aircraft Config
   autopilot.create(screens[6]);   // Screen 6: MSFS Autopilot
+  autopilot.setCommandHandler(sendCommand);
 
   // ---- Alert overlay (on top of all screens) ----
   alert.create(lv_layer_top());
@@ -465,6 +494,8 @@ void setup() {
   lv_obj_align(lblNoData, LV_ALIGN_BOTTOM_MID, 0, -5);
   // Start visible until first data arrives
 
+  pageDots.create(lv_layer_top(), NUM_SCREENS);
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   lv_screen_load(screens[0]);
 
 #ifdef WIFI_ENABLED
@@ -485,7 +516,7 @@ void setup() {
   lastDataMs = millis();
   Serial.printf("Free heap: %u bytes (largest block %u)\n",
                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
-  Serial.printf("HUD ready (firmware %s). Touch to cycle screens (7 modes). Waiting for data...\n", HUD_FW_VERSION);
+  Serial.printf("HUD ready (firmware %s). Swipe or press BOOT to change screens. Waiting for data...\n", HUD_FW_VERSION);
 }
 
 void loop() {
@@ -511,6 +542,9 @@ void loop() {
     }
     // Feed UDP bytes to frame decoder (the sender emits one frame per datagram)
     while (udp.parsePacket() > 0) {
+      udpPeer = udp.remoteIP();
+      udpPeerPort = udp.remotePort();
+      udpPeerSeenMs = millis();
       uint8_t buf[72];
       int len = udp.read(buf, sizeof(buf));
       for (int i = 0; i < len; i++) {
@@ -547,14 +581,17 @@ void loop() {
     lv_obj_add_flag(lblNoData, LV_OBJ_FLAG_HIDDEN);
   }
 
-  // Touch to toggle mode (rising edge with debounce)
-  uint16_t tx, ty;
-  bool pressed = touchRead(&tx, &ty);
-  if (pressed && !touchWasPressed && (millis() - lastToggleMs > DEBOUNCE_MS)) {
-    toggleMode();
-    lastToggleMs = millis();
+  // Screen navigation: swipes (seen by the touch callback) and the BOOT button
+  bool bootDown = digitalRead(BOOT_BUTTON_PIN) == LOW;
+  if (bootDown != bootWasDown && millis() - bootChangedMs > 40) {  // debounce
+    bootChangedMs = millis();
+    bootWasDown = bootDown;
+    if (bootDown) pendingScreenStep = 1;
   }
-  touchWasPressed = pressed;
+  if (pendingScreenStep != 0) {
+    showScreen(pendingScreenStep);
+    pendingScreenStep = 0;
+  }
 
   yield();
 }

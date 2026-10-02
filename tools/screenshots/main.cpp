@@ -97,6 +97,7 @@ static AircraftConfig config;
 static AutopilotStatus autopilot;
 static AlertIndicator alert;
 
+static PageIndicator pageDots;
 static std::string outDir = ".";
 static int failures = 0;
 
@@ -107,8 +108,9 @@ static lv_obj_t* newScreen() {
   return scr;
 }
 
-static void shot(const char* name, lv_obj_t* screen) {
+static void shot(const char* name, lv_obj_t* screen, int index) {
   lv_screen_load(screen);
+  pageDots.set(index);
   lv_refr_now(NULL);
   std::string path = outDir + "/" + name + ".png";
   if (writePng(path, 2)) {
@@ -150,6 +152,7 @@ int main(int argc, char** argv) {
   AlertIndicatorConfig alertCfg;
   alertCfg.ledPin = -1;
   alert.create(lv_layer_top(), alertCfg);
+  pageDots.create(lv_layer_top(), 7);  // as in the sketch
 
   // Sample telemetry: a light single in a climbing left turn out of Zurich.
   // Values are in wire units, exactly as the sender would deliver them.
@@ -167,13 +170,13 @@ int main(int argc, char** argv) {
   static const char* NAMES[7] = {
     "gyro", "engine", "flight-data", "g-force", "nav", "config", "autopilot",
   };
-  for (int i = 0; i < 7; i++) shot(NAMES[i], screens[i]);
+  for (int i = 0; i < 7; i++) shot(NAMES[i], screens[i], i);
 
   // Alert overlay: stall warning on top of the flight data screen
   alert.setFlags(0x0001);
   fakeMs += 1000;
   alert.tick(fakeMs);
-  shot("alert", screens[2]);
+  shot("alert", screens[2], 2);
 
   lv_mem_monitor_t mon;
   lv_mem_monitor(&mon);

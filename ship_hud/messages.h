@@ -10,6 +10,27 @@ enum MsgType : uint8_t {
   MSG_NAV_DATA    = 0x07,
   MSG_CONFIG      = 0x08,
   MSG_AUTOPILOT   = 0x09,
+  MSG_COMMAND     = 0x20,  // ESP32 -> PC: a control on the display was used
+};
+
+/// Commands the display sends when a control is tapped (CommandMsg.command).
+/// The sender turns them into simulator events.
+enum HudCommand : uint8_t {
+  CMD_AP_MASTER = 1,   // toggle autopilot master
+  CMD_AP_HDG    = 2,   // toggle heading hold
+  CMD_AP_ALT    = 3,   // toggle altitude hold
+  CMD_AP_VS     = 4,   // toggle vertical speed hold
+  CMD_AP_NAV    = 5,   // toggle NAV1 hold
+  CMD_AP_APR    = 6,   // toggle approach hold
+  CMD_HDG_INC   = 7,   // heading bug +1°
+  CMD_HDG_DEC   = 8,   // heading bug -1°
+  CMD_ALT_INC   = 9,   // autopilot altitude + one step (usually 100 ft)
+  CMD_ALT_DEC   = 10,  // autopilot altitude - one step
+};
+
+/// Command payload (ESP32 -> PC).
+struct __attribute__((packed)) CommandMsg {
+  uint8_t command;  // HudCommand
 };
 
 /// Attitude message payload (PC -> ESP32).

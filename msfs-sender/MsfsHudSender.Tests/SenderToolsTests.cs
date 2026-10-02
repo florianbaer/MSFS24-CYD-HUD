@@ -35,7 +35,7 @@ public class DemoFlightTests
     [InlineData(51.0)]
     public void EmitsOneFramePerMessageType(double t)
     {
-        var frames = DemoFlight.Frames(t);
+        var frames = new DemoFlight().Frames(t);
         var types = frames.Select(f => Cobs.Decode(f[1..^1])[0]).ToArray();
         Assert.Equal(
             new[] { Messages.MsgAttitude, Messages.MsgEngine, Messages.MsgFlightData, Messages.MsgGForce,
@@ -48,11 +48,60 @@ public class DemoFlightTests
     {
         static ushort Alerts(double t)
         {
-            var frame = DemoFlight.Frames(t)[4];
+            var frame = new DemoFlight().Frames(t)[4];
             var raw = Cobs.Decode(frame[1..^1]);
             return BitConverter.ToUInt16(raw, 1);
         }
         Assert.Equal(0, Alerts(10));
         Assert.Equal(Messages.AlertStall, Alerts(51));
+    }
+
+    [Fact]
+    public void ControlsChangeTheDemoAutopilot()
+    {
+        var flight = new DemoFlight();
+        var (flags, alt, hdg) = flight.Autopilot;
+        Assert.NotEqual(0, flags & Messages.ApMaster);
+
+        flight.Apply(HudCommand.ApMaster);
+        flight.Apply(HudCommand.ApVerticalSpeedHold);
+        flight.Apply(HudCommand.AltitudeInc);
+        flight.Apply(HudCommand.HeadingBugDec);
+        Assert.Equal(0, flight.Autopilot.Flags & Messages.ApMaster);
+        Assert.NotEqual(0, flight.Autopilot.Flags & Messages.ApVsLock);
+        Assert.Equal(alt + 100, flight.Autopilot.Altitude);
+        Assert.Equal(hdg - 1, flight.Autopilot.Heading);
+
+        // ... and the next autopilot frame carries the change
+        var raw = Cobs.Decode(flight.Frames(0)[7][1..^1]);
+        Assert.Equal(Messages.MsgAutopilot, raw[0]);
+        Assert.Equal(flight.Autopilot.Flags, BitConverter.ToUInt16(raw, 1));
+        Assert.Equal(alt + 100, BitConverter.ToInt32(raw, 3));
+    }
+
+    [Fact]
+    public void HeadingBugWrapsAroundNorth()
+    {
+        var flight = new DemoFlight();
+        for (int i = 0; i < 271; i++) flight.Apply(HudCommand.HeadingBugDec);
+        Assert.Equal(359, flight.Autopilot.Heading);
+        flight.Apply(HudCommand.HeadingBugInc);
+        Assert.Equal(0, flight.Autopilot.Heading);
+    }
+}
+
+public class SimEventsTests
+{
+    [Fact]
+    public void EveryCommandHasASimEvent() =>
+        Assert.All(Enum.GetValues<HudCommand>(), c => Assert.True(SimEvents.ForCommand.ContainsKey(c)));
+
+    [Fact]
+    public void ParsesCommandFramesOnly()
+    {
+        Assert.Equal(HudCommand.ApNavHold, SimEvents.Parse(new Frame(Messages.MsgCommand, [5])));
+        Assert.Null(SimEvents.Parse(new Frame(Messages.MsgCommand, [99])));      // unknown command
+        Assert.Null(SimEvents.Parse(new Frame(Messages.MsgAttitude, [1])));      // not a command
+        Assert.Null(SimEvents.Parse(new Frame(Messages.MsgCommand, [1, 2])));    // wrong length
     }
 }

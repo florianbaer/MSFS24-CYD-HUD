@@ -30,6 +30,8 @@ public static class SimConnectProtocol
 
     // Client functions
     private const uint FnOpen = 0x01;
+    private const uint FnMapClientEventToSimEvent = 0x04;
+    private const uint FnTransmitClientEvent = 0x05;
     private const uint FnAddToDataDefinition = 0x0C;
     private const uint FnRequestDataOnSimObject = 0x0E;
 
@@ -39,6 +41,10 @@ public static class SimConnectProtocol
     public const uint RecvOpen = 2;
     public const uint RecvQuit = 3;
     public const uint RecvSimObjectData = 8;
+
+    /// <summary>TransmitClientEvent flag: the group id is a priority.</summary>
+    public const uint EventFlagGroupIdIsPriority = 0x10;
+    public const uint PriorityHighest = 1;
 
     public enum DataType : uint { Int32 = 1, Int64 = 2, Float32 = 3, Float64 = 4 }
 
@@ -84,6 +90,28 @@ public static class SimConnectProtocol
         p.U32(origin);
         p.U32(interval);
         p.U32(limit);
+        return p.Finish(sendId);
+    }
+
+    /// <summary>Binds a client event id to a simulator event such as "AP_MASTER".</summary>
+    public static byte[] MapClientEventToSimEvent(uint eventId, string eventName, uint sendId)
+    {
+        var p = new PacketWriter(FnMapClientEventToSimEvent, ProtocolFsxSp2);
+        p.U32(eventId);
+        p.String(eventName, 256);
+        return p.Finish(sendId);
+    }
+
+    /// <summary>Fires a mapped event at an object (the user aircraft), as if a cockpit control was used.</summary>
+    public static byte[] TransmitClientEvent(uint objectId, uint eventId, uint data, uint sendId,
+        uint groupId = PriorityHighest, uint flags = EventFlagGroupIdIsPriority)
+    {
+        var p = new PacketWriter(FnTransmitClientEvent, ProtocolFsxSp2);
+        p.U32(objectId);
+        p.U32(eventId);
+        p.U32(data);
+        p.U32(groupId);
+        p.U32(flags);
         return p.Finish(sendId);
     }
 

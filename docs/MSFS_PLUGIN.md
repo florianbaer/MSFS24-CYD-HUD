@@ -91,7 +91,7 @@ Replace `C:\Your\Path\` with the actual folder where you saved the exe. `auto` f
 
 ## Display Screens
 
-The ESP32 display has 7 screens cycled by touch tap:
+The ESP32 display has 7 screens; swipe left/right or press the BOOT button to change them:
 
 | # | Screen | Data shown |
 |---|--------|------------|
@@ -103,7 +103,24 @@ The ESP32 display has 7 screens cycled by touch tap:
 | 5 | **MSFS Config** | Flaps, gear status, elevator/rudder trim |
 | 6 | **MSFS Autopilot** | AP master, mode annunciators, target alt/hdg |
 
-**Tap the touchscreen** to cycle to the next screen. All screens receive data simultaneously.
+All screens receive data simultaneously.
+
+## Display controls
+
+Taps on the display come back to the sender as command frames (message `0x20`, over the same serial line or as UDP datagrams to the port the sender sends from) and are turned into simulator events:
+
+| Control | MSFS event |
+|---|---|
+| AP tile | `AP_MASTER` |
+| HDG tile | `AP_PANEL_HEADING_HOLD` |
+| ALT tile | `AP_PANEL_ALTITUDE_HOLD` |
+| VS tile | `AP_PANEL_VS_HOLD` |
+| NAV tile | `AP_NAV1_HOLD` |
+| APR tile | `AP_APR_HOLD` |
+| HDG − / + | `HEADING_BUG_DEC` / `HEADING_BUG_INC` |
+| ALT − / + | `AP_ALT_VAR_DEC` / `AP_ALT_VAR_INC` |
+
+The sender logs each one (`Display: ApMaster`). Aircraft with their own autopilot systems may not react to these standard events. Controls are not available with `--sdk-simconnect`.
 
 Alert warnings (stall, overspeed, gear unsafe, engine fire) overlay on all screens with blinking text and a heartbeat LED pattern.
 
@@ -147,7 +164,7 @@ All multi-byte fields are little-endian.
 -> The sender lists the ports it can see. Check the port name in Device Manager and close anything else that has the port open (Arduino serial monitor, `pio device monitor`).
 
 **No data on display**
--> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Tap to cycle through all 7 screens. While telemetry arrives, the display's serial log prints `Telemetry: N frames in 10 s` (about 1600 at 20 Hz); if that line is missing, nothing valid is reaching it.
+-> Verify baud rates match (default 115200). The display shows "NO DATA" if no messages arrive for 2 seconds. Swipe through all 7 screens. While telemetry arrives, the display's serial log prints `Telemetry: N frames in 10 s` (about 1600 at 20 Hz); if that line is missing, nothing valid is reaching it.
 
 **Display stays black, freezes, or shows garbage**
 -> Check the serial log at boot: `Display: DMA double-buffered` or `single buffer`, and the free heap. If DMA is the problem on your board, build with `-DHUD_USE_DMA=0` (PlatformIO: add it to `build_flags`; arduino-cli: `--build-property "compiler.cpp.extra_flags=-DHUD_USE_DMA=0"`).

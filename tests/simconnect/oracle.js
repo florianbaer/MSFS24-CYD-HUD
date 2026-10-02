@@ -31,7 +31,7 @@ const server = net.createServer(sock => {
       out.client.push(pkt.toString('hex'));
       const type = pkt.readUInt32LE(8) & 0xffff;
       if (type === 0x01) sock.write(recvOpen);
-      if (type === 0x0e) { sock.write(Buffer.concat([simData, exception])); setTimeout(() => sock.write(quit), 50); }
+      if (type === 0x05) { sock.write(Buffer.concat([simData, exception])); setTimeout(() => sock.write(quit), 50); }
     }
   });
 });
@@ -45,5 +45,8 @@ server.listen(0, '127.0.0.1', async () => {
   handle.addToDataDefinition(1, 'PLANE PITCH DEGREES', 'radians', sc.SimConnectDataType.FLOAT64);
   handle.addToDataDefinition(1, 'GENERAL ENG RPM:1', 'rpm', sc.SimConnectDataType.FLOAT64);
   handle.requestDataOnSimObject(7, 1, sc.SimConnectConstants.OBJECT_ID_USER, sc.SimConnectPeriod.ONCE);
+  // Events (autopilot buttons): map a client event, then fire it at the user aircraft
+  handle.mapClientEventToSimEvent(3, 'AP_MASTER');
+  handle.transmitClientEvent(sc.SimConnectConstants.OBJECT_ID_USER, 3, 0, 1, 0x10);  // priority HIGHEST
 });
 setTimeout(() => { console.log('TIMEOUT', JSON.stringify(out)); process.exit(1); }, 5000);

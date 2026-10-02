@@ -123,6 +123,9 @@ public sealed class MsfsSource : IFlightSource
         foreach (var (def, vars) in Definitions)
             foreach (var (name, units) in vars)
                 sc.AddToDataDefinition((uint)def, name, units);
+        // Client event id = command id
+        foreach (var (command, simEvent) in SimEvents.ForCommand)
+            sc.MapClientEventToSimEvent((uint)command, simEvent);
         _sc = sc;
     }
 
@@ -141,6 +144,19 @@ public sealed class MsfsSource : IFlightSource
         catch (Exception ex) when (ex is IOException or ObjectDisposedException)
         {
             // The simulator closed the connection (it may not have sent Quit first)
+            _simQuit = true;
+        }
+    }
+
+    public void SendCommand(Protocol.HudCommand command)
+    {
+        if (_sc is null || _simQuit) return;
+        try
+        {
+            _sc.TransmitClientEvent((uint)command);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+        {
             _simQuit = true;
         }
     }

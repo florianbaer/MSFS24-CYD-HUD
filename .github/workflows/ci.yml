@@ -78,6 +78,8 @@ jobs:
           ./smoothing_test
       - name: Render all screens
         run: make -C tools/screenshots -j4 OUT="$RUNNER_TEMP/screens"
+      - name: Touch controls (scripted taps and swipes through LVGL)
+        run: make -C tools/screenshots touch-test
 
   msfs-sender-test:
     name: Protocol & conversion tests

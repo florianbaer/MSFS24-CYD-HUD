@@ -5,12 +5,38 @@ namespace MsfsHudSender;
 /// <summary>
 /// Synthetic telemetry for checking the display without the simulator: a light
 /// single flying gentle S-turns while climbing and descending. Every screen gets
-/// moving values, and a short stall warning fires once a minute.
+/// moving values, and a short stall warning fires once a minute. Its autopilot
+/// reacts to the display's controls, so the touch buttons can be tried out too.
 /// </summary>
-public static class DemoFlight
+public sealed class DemoFlight
 {
+    private ushort _apFlags = Messages.ApMaster | Messages.ApHeadingLock | Messages.ApAltitudeLock;
+    private int _apAltitude = 6000;
+    private int _apHeading = 270;
+
+    /// <summary>What the demo aircraft's autopilot shows right now.</summary>
+    public (ushort Flags, int Altitude, int Heading) Autopilot => (_apFlags, _apAltitude, _apHeading);
+
+    /// <summary>Applies a control used on the display, like the simulator would.</summary>
+    public void Apply(HudCommand command)
+    {
+        switch (command)
+        {
+            case HudCommand.ApMaster: _apFlags ^= Messages.ApMaster; break;
+            case HudCommand.ApHeadingHold: _apFlags ^= Messages.ApHeadingLock; break;
+            case HudCommand.ApAltitudeHold: _apFlags ^= Messages.ApAltitudeLock; break;
+            case HudCommand.ApVerticalSpeedHold: _apFlags ^= Messages.ApVsLock; break;
+            case HudCommand.ApNavHold: _apFlags ^= Messages.ApNavLock; break;
+            case HudCommand.ApApproachHold: _apFlags ^= Messages.ApAprLock; break;
+            case HudCommand.HeadingBugInc: _apHeading = (_apHeading + 1) % 360; break;
+            case HudCommand.HeadingBugDec: _apHeading = (_apHeading + 359) % 360; break;
+            case HudCommand.AltitudeInc: _apAltitude = Math.Min(_apAltitude + 100, 45000); break;
+            case HudCommand.AltitudeDec: _apAltitude = Math.Max(_apAltitude - 100, 0); break;
+        }
+    }
+
     /// <summary>All frames for one send cycle at <paramref name="t"/> seconds into the demo.</summary>
-    public static IReadOnlyList<byte[]> Frames(double t)
+    public IReadOnlyList<byte[]> Frames(double t)
     {
         // Bank swings ±25° over 24 s; pitch follows a slower climb/descent cycle
         double bankDeg = 25 * Math.Sin(t * 2 * Math.PI / 24);
@@ -36,9 +62,9 @@ public static class DemoFlight
             FrameBuilder.FrameGForce((short)(5 * Math.Sin(t)), (short)Math.Round(loadG * 100), (short)(8 * Math.Sin(t / 2))),
             FrameBuilder.FrameAlerts(stall ? Messages.AlertStall : (ushort)0),
             FrameBuilder.FrameNavData(474502000 + (int)(t * 2000), 85618000 + (int)(t * 3000),
-                2700, (ushort)Math.Max(0, 240 - t * 0.5), Tenths(Mod(headingDeg - 5, 360))),
+                (short)(_apHeading * 10), (ushort)Math.Max(0, 240 - t * 0.5), Tenths(Mod(headingDeg - 5, 360))),
             FrameBuilder.FrameConfig(10, 2, (sbyte)(pitchDeg * 2), 0),
-            FrameBuilder.FrameAutopilot(Messages.ApMaster | Messages.ApHeadingLock | Messages.ApAltitudeLock, 6000, 2700),
+            FrameBuilder.FrameAutopilot(_apFlags, _apAltitude, (short)(_apHeading * 10)),
         ];
     }
 

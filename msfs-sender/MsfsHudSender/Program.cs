@@ -119,23 +119,18 @@ if (!udpMode && target.Equals("auto", StringComparison.OrdinalIgnoreCase))
 }
 
 // Set up transport
-Action<byte[]> write;
-IDisposable transport;
+ITransport transport;
 
 try
 {
     if (udpMode)
     {
-        var udp = new UdpTransport(target, udpPort);
-        write = udp.Write;
-        transport = udp;
+        transport = new UdpTransport(target, udpPort);
         Console.WriteLine($"Sending via UDP to {target}:{udpPort} at {hz}Hz");
     }
     else
     {
-        var serial = new SerialTransport(target, baud);
-        write = serial.Write;
-        transport = serial;
+        transport = new SerialTransport(target, baud);
         Console.WriteLine($"Sending via serial {target} at {baud} baud, {hz}Hz");
     }
 }
@@ -148,17 +143,32 @@ catch (Exception ex)
 }
 
 var interval = TimeSpan.FromMilliseconds(1000.0 / hz);
+void write(byte[] frame) => transport.Write(frame);
+
+// Controls used on the display (autopilot buttons) arrive as command frames
+var fromDisplay = new FrameReader();
+IEnumerable<HudCommand> ReceivedCommands()
+{
+    foreach (var frame in fromDisplay.Feed(transport.ReadAvailable()))
+        if (SimEvents.Parse(frame) is { } command)
+        {
+            Console.WriteLine($"Display: {command}");
+            yield return command;
+        }
+}
 
 if (demo)
 {
     Console.WriteLine("Demo mode: sending a synthetic flight. Press Ctrl+C to stop");
+    var flight = new DemoFlight();
     var clock = System.Diagnostics.Stopwatch.StartNew();
     try
     {
         while (!cts.Token.IsCancellationRequested)
         {
             var start = clock.Elapsed;
-            foreach (var frame in DemoFlight.Frames(start.TotalSeconds)) write(frame);
+            foreach (var command in ReceivedCommands()) flight.Apply(command);
+            foreach (var frame in flight.Frames(start.TotalSeconds)) write(frame);
             var delay = interval - (clock.Elapsed - start);
             if (delay > TimeSpan.Zero) cts.Token.WaitHandle.WaitOne(delay);
         }
@@ -225,6 +235,7 @@ try
     {
         var start = DateTime.UtcNow;
 
+        foreach (var command in ReceivedCommands()) source.SendCommand(command);
         source.RequestData();
         if (source.SimQuit)
         {
